@@ -10,7 +10,9 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 |---|---|
 | ![Control Center](screenshots/control-center.png) | ![Notifications panel](screenshots/notifications.png) |
 
-![Logo menu](screenshots/logo-menu.png)
+| Logo menu | Settings window |
+|---|---|
+| ![Logo menu](screenshots/logo-menu.png) | ![Settings window](screenshots/settings.png) |
 
 ---
 
@@ -21,12 +23,12 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Status icons**: battery, Wi-Fi, Bluetooth, sound (scroll to change the volume), display, keyboard layout, Now Playing (the song name scrolls when it doesn't fit; large-cover or compact panel with a progress bar drawn as a line, a colored line or a wave), Focus, privacy dots for the microphone and camera, weather and search (Windows Search or Siri Plus Launchpad); icons that don't fit collapse into an arrow, and each icon can be turned on or off
 - **Control Center**: Wi-Fi, Bluetooth, media, dark mode, Do Not Disturb, brightness, sound and output, plus tiles you can add: night light, airplane mode, screenshot, screen recording, power mode and power plan, energy saver (one click on and off), magnifier, lock screen, calculator, Task Manager, emoji and show desktop. **Edit Controls** adds, removes, moves and resizes tiles. Power mode opens a box with the Windows 11 modes and power plans (repeated plans hidden). Tile names that don't fit scroll when the mouse is over the tile. Tiles can be pills or rounded squares
 - **Notice pills**: glass pills that drop from the bar for headphones, audio output, low battery, charger, Focus, USB devices and drives, finished downloads, copied items, screenshots and Windows notifications, plus floating pills for volume, brightness and Bluetooth. Style (glass, liquid glass or dark), size, position, duration and animations are configurable
-- **Notifications** (turn on *Pill - Windows notifications* in the mod's settings): app notifications show in the pill and in the bell panel, grouped by app; **reply** to messages (like WhatsApp) right from the pill when the app supports it; **drag** a notification aside to clear it; optionally, **only the bar** shows notifications (Windows' banners move off the screen while the bar shows them)
+- **Notifications** (turn on *Windows notifications* in **Menu Bar Settings…** → **Notice pills**): app notifications show in the pill and in the bell panel, grouped by app; **reply** to messages (like WhatsApp) right from the pill when the app supports it; **drag** a notification aside to clear it; optionally, **only the bar** shows notifications (Windows' banners move off the screen while the bar shows them)
 - **Calendar**: click the clock for the calendar and your agenda from your own .ics files or links, imported right from the settings
 - **Weather**: the temperature on the bar and a glass widget with the forecast (Open-Meteo, MET Norway or wttr.in, no account needed)
 - **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; menus in their own frosted glass or the same glass as the Control Center; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
-- **Settings**: every option is on the mod's settings page in Windhawk, applied live without restarting the bar; logo → **Menu Bar Settings…** opens a macOS-style window for the panel glass, the weather place and widget, and imported .ics files
+- **Settings window**: logo → **Menu Bar Settings…** opens the settings in a macOS-style window, with search, applied live without restarting the bar
 - **Your language**: follows the Windows display language, or pick one (English, Portuguese, Spanish, French, German, Italian and Simplified Chinese)
 
 ---
@@ -40,7 +42,7 @@ To try a version from this repository before it reaches the catalog: in Windhawk
 
 ## Settings
 
-Windhawk's settings page for the mod has every option. The mod's own window (logo menu → **Menu Bar Settings…**) holds only what has no place there: the panel glass, the weather place and widget, imported .ics files and the look of that window.
+The settings live in the mod's own window: logo menu → **Menu Bar Settings…**, applied live. Windhawk's settings page for the mod has the few the window doesn't: font, glass tints, theme, the name shown for the desktop, ready-made menus, Control Center tile look, opening animation, tray click, the app update count and .ics calendar links.
 
 ## What changes Windows settings
 
@@ -52,7 +54,7 @@ The mod only goes online for features you set up yourself:
 
 - **Weather**, once you pick a place: place search through OpenStreetMap Nominatim or Open-Meteo, and the forecast from the service you choose (Open-Meteo, MET Norway or wttr.in) with the place's coordinates rounded to about 1 km. Turning the weather icon off stops all requests.
 - **.ics links** you add in Windhawk's settings, downloaded when you open the calendar, at most every 15 minutes. Local .ics files never use the network.
-- **App update count** (off by default): runs `winget upgrade`, which checks winget's sources online. The mod never accepts winget's source agreements for you. The Windows Update count is offline.
+- **App update count** (off by default, in Windhawk's settings): runs `winget upgrade`, which checks winget's sources online. The mod never accepts winget's source agreements for you. The Windows Update count is offline.
 
 The "copied" pill skips anything an app marks as private (password managers do), the same way Windows' clipboard history does.
 
