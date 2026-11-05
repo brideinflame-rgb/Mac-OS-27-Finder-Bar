@@ -42,7 +42,7 @@ To try a version from this repository before it reaches the catalog: in Windhawk
 
 ## Settings
 
-The settings live in the mod's own window: logo menu → **Menu Bar Settings…**, applied live. Windhawk's settings page for the mod has the few the window doesn't: font, glass tints, theme, the name shown for the desktop, ready-made menus, Control Center tile look, opening animation, tray click, the app update count and .ics calendar links.
+The settings live in the mod's own window: logo menu → **Menu Bar Settings…**, applied live. Windhawk's settings page for the mod has the few the window doesn't: font, glass tints, theme, the name shown for the desktop, ready-made menus, Control Center tile look, opening animation, tray click, the app update count and .ics calendar links, plus **Reset the bar's settings**, which puts the window's options back to their defaults if the bar ever doesn't show up.
 
 ## What changes Windows settings
 

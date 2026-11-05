@@ -42,7 +42,7 @@ Para testar uma versão deste repositório antes de ela chegar ao catálogo: no 
 
 ## Ajustes
 
-Os ajustes ficam na janela do próprio mod: menu do logo → **Ajustes da Barra de Menus…**, aplicados na hora. A página de configurações do mod no Windhawk tem só os poucos que a janela não tem: fonte, tintas do vidro, tema, nome exibido para a área de trabalho, menus prontos, aparência dos blocos da Central, animação de abertura, clique na bandeja, contagem de atualizações de apps e links .ics de calendário.
+Os ajustes ficam na janela do próprio mod: menu do logo → **Ajustes da Barra de Menus…**, aplicados na hora. A página de configurações do mod no Windhawk tem só os poucos que a janela não tem: fonte, tintas do vidro, tema, nome exibido para a área de trabalho, menus prontos, aparência dos blocos da Central, animação de abertura, clique na bandeja, contagem de atualizações de apps e links .ics de calendário, além de **Restaurar os ajustes da barra**, que volta as opções da janela ao padrão se a barra um dia não aparecer.
 
 ## O que muda ajustes do Windows
 
