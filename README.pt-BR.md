@@ -24,7 +24,7 @@ Um mod do [Windhawk](https://windhawk.net) que coloca uma barra de menus no esti
 - **Central de Controle**: Wi-Fi, Bluetooth, mídia, modo escuro, Não Perturbe, brilho, som e saída de áudio, e blocos que você pode adicionar: luz noturna, modo avião, captura de tela, gravação de tela, modo e plano de energia, economia de energia (liga e desliga com um clique), lupa, bloquear tela, calculadora, Gerenciador de Tarefas, emojis e mostrar área de trabalho. **Editar controles** adiciona, remove, move e redimensiona os blocos. O modo de energia abre uma caixa com os modos do Windows 11 e os planos de energia (planos repetidos ficam ocultos). Os nomes dos blocos que não cabem passam ao parar o mouse em cima. Os blocos podem ser pílulas ou quadrados arredondados
 - **Pílulas de aviso**: pílulas de vidro que descem da barra para fones, saída de áudio, bateria fraca, carregador, Foco, Caps Lock, dispositivos USB e discos, downloads concluídos, copiar e recortar, capturas e gravações de tela e notificações do Windows (as que permitem uma ação ficam mais tempo e vão para o painel do sino), além de pílulas flutuantes de volume, brilho e Bluetooth. Estilo (vidro, vidro líquido ou escuro), tamanho, posição, duração e animações são ajustáveis
 - **Notificações** (ligue *Notificações do Windows* em **Ajustes da Barra de Menus…** → **Pílulas de aviso**): as notificações dos apps aparecem na pílula e no painel do sino, agrupadas por app; **responda** mensagens (como do WhatsApp) direto pela pílula quando o app permite; **arraste** uma notificação para o lado para apagá-la; e, se quiser, **só a barra** mostra as notificações (as faixas do Windows saem da tela enquanto a barra as mostra)
-- **Calendário**: clique no relógio para ver o calendário e a sua agenda, de arquivos ou links .ics, importados direto pelos ajustes
+- **Calendário**: clique no relógio para ver o calendário e a sua agenda, de arquivos .ics seus (lidos no PC, nunca baixados), importados direto pelos ajustes
 - **Previsão do tempo**: a temperatura na barra e um widget de vidro com a previsão (Open-Meteo, MET Norway ou wttr.in, sem precisar de conta)
 - **Vidro ao vivo**: a barra e os painéis desfocam o que está atrás deles em tempo real, com um vidro líquido experimental com refração nas bordas (ligado por padrão)
 - **Barra e menus**: barra transparente (padrão), de vidro desfocado ou de vidro líquido, opaca com o app maximizado; menus com vidro fosco próprio ou o mesmo vidro da Central; tema claro, escuro ou automático, nove cores de seleção, fonte e tamanhos; some com apps em tela cheia, ocultar automaticamente opcional, todos os monitores
@@ -42,7 +42,7 @@ Para testar uma versão deste repositório antes de ela chegar ao catálogo: no 
 
 ## Ajustes
 
-Os ajustes ficam na janela do próprio mod: menu do logo → **Ajustes da Barra de Menus…**, aplicados na hora. A página de configurações do mod no Windhawk tem só os poucos que a janela não tem: fonte, tintas do vidro, tema, nome exibido para a área de trabalho, menus prontos, aparência dos blocos da Central, animação de abertura, clique na bandeja, contagem de atualizações de apps e links .ics de calendário, além de **Restaurar os ajustes da barra**, que volta as opções da janela ao padrão se a barra um dia não aparecer.
+Os ajustes ficam na janela do próprio mod: menu do logo → **Ajustes da Barra de Menus…**, aplicados na hora. A página de configurações do mod no Windhawk tem só os poucos que a janela não tem: fonte, tintas do vidro, tema, nome exibido para a área de trabalho, menus prontos, aparência dos blocos da Central, animação de abertura, clique na bandeja, contagem de atualizações de apps e caminhos de arquivos .ics, além de **Restaurar os ajustes da barra**, que volta as opções da janela ao padrão se a barra um dia não aparecer.
 
 ## O que muda ajustes do Windows
 
@@ -50,10 +50,9 @@ Alguns blocos da Central de Controle e itens de menu mudam ajustes reais do Wind
 
 ## Uso da rede
 
-O mod só acessa a internet para recursos que você mesmo configura:
+O mod só acessa a internet para recursos que você mesmo configura (o calendário só lê arquivos .ics do PC):
 
 - **Previsão do tempo**, depois que você escolhe um lugar: a busca do lugar pelo OpenStreetMap Nominatim ou pelo Open-Meteo, e a previsão pelo serviço que você escolher (Open-Meteo, MET Norway ou wttr.in), com as coordenadas do lugar arredondadas para cerca de 1 km. Desligar o ícone da previsão para todos os pedidos.
-- **Links .ics** que você coloca nas configurações do Windhawk, baixados quando você abre o calendário, no máximo a cada 15 minutos. Arquivos .ics locais nunca usam a rede.
 - **Contagem de atualizações de apps** (desligada por padrão, nas configurações do Windhawk): roda `winget upgrade`, que consulta as fontes do winget pela internet. O mod nunca aceita os termos das fontes do winget por você. A contagem do Windows Update é offline.
 
 A pílula de copiar só diz "Copiado" ou "Recortado": nunca mostra o que foi copiado, e ignora o que um app marca como privado (os gerenciadores de senha fazem isso), do mesmo jeito que o histórico da área de transferência do Windows.

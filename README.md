@@ -24,7 +24,7 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Control Center**: Wi-Fi, Bluetooth, media, dark mode, Do Not Disturb, brightness, sound and output, plus tiles you can add: night light, airplane mode, screenshot, screen recording, power mode and power plan, energy saver (one click on and off), magnifier, lock screen, calculator, Task Manager, emoji and show desktop. **Edit Controls** adds, removes, moves and resizes tiles. Power mode opens a box with the Windows 11 modes and power plans (repeated plans hidden). Tile names that don't fit scroll when the mouse is over the tile. Tiles can be pills or rounded squares
 - **Notice pills**: glass pills that drop from the bar for headphones, audio output, low battery, charger, Focus, Caps Lock, USB devices and drives, finished downloads, copy and cut, screenshots, screen recordings and Windows notifications (the ones you can act on stay longer and go to the bell panel), plus floating pills for volume, brightness and Bluetooth. Style (glass, liquid glass or dark), size, position, duration and animations are configurable
 - **Notifications** (turn on *Windows notifications* in **Menu Bar Settings…** → **Notice pills**): app notifications show in the pill and in the bell panel, grouped by app; **reply** to messages (like WhatsApp) right from the pill when the app supports it; **drag** a notification aside to clear it; optionally, **only the bar** shows notifications (Windows' banners move off the screen while the bar shows them)
-- **Calendar**: click the clock for the calendar and your agenda from your own .ics files or links, imported right from the settings
+- **Calendar**: click the clock for the calendar and your agenda from your own .ics files (read locally, never downloaded), imported right from the settings
 - **Weather**: the temperature on the bar and a glass widget with the forecast (Open-Meteo, MET Norway or wttr.in, no account needed)
 - **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; menus in their own frosted glass or the same glass as the Control Center; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
@@ -42,7 +42,7 @@ To try a version from this repository before it reaches the catalog: in Windhawk
 
 ## Settings
 
-The settings live in the mod's own window: logo menu → **Menu Bar Settings…**, applied live. Windhawk's settings page for the mod has the few the window doesn't: font, glass tints, theme, the name shown for the desktop, ready-made menus, Control Center tile look, opening animation, tray click, the app update count and .ics calendar links, plus **Reset the bar's settings**, which puts the window's options back to their defaults if the bar ever doesn't show up.
+The settings live in the mod's own window: logo menu → **Menu Bar Settings…**, applied live. Windhawk's settings page for the mod has the few the window doesn't: font, glass tints, theme, the name shown for the desktop, ready-made menus, Control Center tile look, opening animation, tray click, the app update count and .ics file paths, plus **Reset the bar's settings**, which puts the window's options back to their defaults if the bar ever doesn't show up.
 
 ## What changes Windows settings
 
@@ -50,10 +50,9 @@ Some Control Center tiles and menu items change real Windows settings, the same 
 
 ## Network use
 
-The mod only goes online for features you set up yourself:
+The mod only goes online for features you set up yourself (the calendar reads local .ics files only):
 
 - **Weather**, once you pick a place: place search through OpenStreetMap Nominatim or Open-Meteo, and the forecast from the service you choose (Open-Meteo, MET Norway or wttr.in) with the place's coordinates rounded to about 1 km. Turning the weather icon off stops all requests.
-- **.ics links** you add in Windhawk's settings, downloaded when you open the calendar, at most every 15 minutes. Local .ics files never use the network.
 - **App update count** (off by default, in Windhawk's settings): runs `winget upgrade`, which checks winget's sources online. The mod never accepts winget's source agreements for you. The Windows Update count is offline.
 
 The copy pill only says "Copied" or "Cut": it never shows what was copied, and it skips anything an app marks as private (password managers do), the same way Windows' clipboard history does.
