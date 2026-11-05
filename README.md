@@ -1,0 +1,49 @@
+# Mac OS 27 Finder Bar
+
+**English** | [Português](README.pt-BR.md)
+
+A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to the top of the screen in Windows 11: the menus of the app in front on the left, and system status, Control Center, notifications and the clock on the right, all in live glass.
+
+<!-- Screenshots: add them to the screenshots folder and link them here, e.g. ![The bar](screenshots/bar.png) -->
+
+---
+
+## Highlights
+
+- **Global menu**: the menus of the app in front, on the bar. Classic Win32 apps show their real menus; modern apps show their menu bar through UI Automation when they have one; browsers, File Explorer, Office, VS Code and other apps get ready-made menus that send the app's own shortcuts. A **Window** menu lists the app's open windows, and **Help** searches every menu of the app
+- **Logo menu**: About This PC, System Settings, Microsoft Store (with pending update counts), Force Quit, Sleep, Hibernate, Restart, Shut Down, Lock Screen and Sign Out
+- **Status icons**: battery, Wi-Fi, Bluetooth, sound (scroll to change the volume), display, keyboard layout, Now Playing (the song name scrolls when it doesn't fit), Focus, privacy dots for the microphone and camera, weather and search (Windows Search or Siri Plus Launchpad); icons that don't fit collapse into an arrow
+- **Control Center**: Wi-Fi, Bluetooth, media, dark mode, Do Not Disturb, brightness, sound and output, plus tiles you can add: night light, airplane mode, screenshot, screen recording, power mode and power plan, energy saver (one click on and off), magnifier, lock screen, calculator, Task Manager, emoji and show desktop. **Edit Controls** adds, removes, moves and resizes tiles
+- **Notice pills**: glass pills that drop from the bar for headphones, audio output, low battery, charger, Focus, USB devices and drives, finished downloads, copied items, screenshots and Windows notifications
+- **Notifications**: app notifications show in the pill and in the bell panel, grouped by app; **reply** to messages (like WhatsApp) right from the pill when the app supports it; **drag** a notification aside to clear it; optionally, **only the bar** shows notifications (Windows' banners move off the screen while the bar shows them)
+- **Calendar**: click the clock for the calendar and your agenda from your own .ics files or links, imported right from the settings
+- **Weather**: the temperature on the bar and a glass widget with the forecast (Open-Meteo, MET Norway or wttr.in, no account needed)
+- **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction
+- **Settings window**: logo → **Menu Bar Settings…** opens every setting in a macOS-style window, with search, applied live without restarting the bar
+- **Your language**: follows the Windows display language, or pick one (English, Portuguese, Spanish, French, German, Italian and Simplified Chinese)
+
+---
+
+## Installing
+
+1. Install [Windhawk](https://windhawk.net).
+2. Search for **Mac OS 27 Finder Bar** in Windhawk's mod catalog and click **Install**.
+
+To try a version from this repository before it reaches the catalog: in Windhawk, click **Create a new mod**, replace the code with the contents of [`mac-os-27-finder-bar.wh.cpp`](mac-os-27-finder-bar.wh.cpp), and click **Compile Mod** and then **Exit Editing Mode**.
+
+## Settings
+
+Most settings live in the mod's own window: logo menu → **Menu Bar Settings…**. Windhawk's settings page for the mod has the same options, plus .ics calendar links.
+
+## Known limitations
+
+- Apps without a classic menu bar use ready-made menus based on keyboard shortcuts.
+- Bluetooth lists classic (non-BLE) devices and opens Settings to connect and disconnect.
+- Power mode and energy saver use undocumented Windows functions; if Windows refuses, the tile opens the matching Settings page.
+- Screen recording uses Win+Shift+R and needs an up-to-date Snipping Tool.
+- Replying from the pill works with apps that register a notification activator with Windows; otherwise the pill opens the app and copies your text.
+- With live glass (and the bar's liquid background), the bar and panels don't show up in screenshots.
+
+## License
+
+[GPL-3.0](LICENSE)
