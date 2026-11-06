@@ -14,6 +14,10 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 |---|---|
 | ![Logo menu](screenshots/logo-menu.png) | ![Settings window](screenshots/settings.png) |
 
+| Control Center in action | Weather |
+|---|---|
+| ![Control Center: power mode box and Edit Controls](screenshots/control-center.gif) | ![Animated weather widget](screenshots/weather.gif) |
+
 ---
 
 ## Highlights

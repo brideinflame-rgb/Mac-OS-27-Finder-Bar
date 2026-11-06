@@ -14,6 +14,10 @@ Um mod do [Windhawk](https://windhawk.net) que coloca uma barra de menus no esti
 |---|---|
 | ![Menu do logo](screenshots/logo-menu.png) | ![Janela de ajustes](screenshots/settings.png) |
 
+| Central de Controle em ação | Previsão do tempo |
+|---|---|
+| ![Central de Controle: caixa de energia e Editar controles](screenshots/control-center.gif) | ![Widget animado da previsão do tempo](screenshots/weather.gif) |
+
 ---
 
 ## Destaques
