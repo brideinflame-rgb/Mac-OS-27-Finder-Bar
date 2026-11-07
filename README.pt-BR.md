@@ -61,6 +61,10 @@ O mod só acessa a internet para recursos que você mesmo configura (o calendár
 
 A pílula de copiar só diz "Copiado" ou "Recortado": nunca mostra o que foi copiado, e ignora o que um app marca como privado (os gerenciadores de senha fazem isso), do mesmo jeito que o histórico da área de transferência do Windows.
 
+## Como funciona
+
+A barra roda num processo próprio: se ela falhar, a barra de tarefas e a área de trabalho continuam funcionando. O mod abre esse processo a partir do Explorer. No Explorer fica só um gancho pequeno, que copia os registros dos ícones da bandeja para a barra.
+
 ## Limitações conhecidas
 
 - Apps sem barra de menus clássica usam menus prontos baseados em atalhos de teclado.

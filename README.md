@@ -61,6 +61,10 @@ The mod only goes online for features you set up yourself (the calendar reads lo
 
 The copy pill only says "Copied" or "Cut": it never shows what was copied, and it skips anything an app marks as private (password managers do), the same way Windows' clipboard history does.
 
+## How it runs
+
+The bar runs in its own process, so if it ever fails, the taskbar and desktop keep working. The mod starts that process from Explorer. Explorer keeps only a small hook that copies the tray icons' registrations to the bar.
+
 ## Known limitations
 
 - Apps without a classic menu bar use ready-made menus based on keyboard shortcuts.
