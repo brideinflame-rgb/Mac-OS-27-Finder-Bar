@@ -63,7 +63,7 @@ A pílula de copiar só diz "Copiado" ou "Recortado": nunca mostra o que foi cop
 
 ## Como funciona
 
-A barra roda num processo próprio: se ela falhar, a barra de tarefas e a área de trabalho continuam funcionando. O mod abre esse processo a partir do Explorer. No Explorer fica só um gancho pequeno, que copia os registros dos ícones da bandeja para a barra.
+A barra roda num processo próprio do Windhawk (aparece como Windhawk no Gerenciador de Tarefas): se ela falhar, a barra de tarefas e a área de trabalho continuam funcionando. No Explorer fica só um gancho pequeno, que copia os registros dos ícones da bandeja para a barra. Se esse processo for encerrado à mão, desative e reative o mod no Windhawk para a barra voltar.
 
 ## Limitações conhecidas
 

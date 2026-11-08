@@ -63,7 +63,7 @@ The copy pill only says "Copied" or "Cut": it never shows what was copied, and i
 
 ## How it runs
 
-The bar runs in its own process, so if it ever fails, the taskbar and desktop keep working. The mod starts that process from Explorer. Explorer keeps only a small hook that copies the tray icons' registrations to the bar.
+The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so if it ever fails, the taskbar and desktop keep working. Explorer keeps only a small hook that copies the tray icons' registrations to the bar. If that process is ended by hand, turn the mod off and on again in Windhawk to bring the bar back.
 
 ## Known limitations
 
