@@ -73,6 +73,7 @@ A barra roda num processo próprio do Windhawk (aparece como Windhawk no Gerenci
 - A gravação de tela usa Win+Shift+R e precisa da Ferramenta de Captura atualizada.
 - Responder pela pílula funciona com apps que registram um ativador de notificações no Windows; senão, a pílula abre o app e copia o seu texto.
 - Com o vidro ao vivo (e o fundo líquido da barra), a barra e os painéis não aparecem em capturas de tela.
+- Se o próprio Windhawk rodar como administrador (modo portátil aberto elevado), a barra não mostra os ícones da bandeja: deixar os dados da bandeja do shell chegarem a uma barra elevada também deixaria qualquer app mandar ícones falsos para ela.
 
 ## Licença
 
