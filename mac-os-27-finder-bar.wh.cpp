@@ -18927,8 +18927,9 @@ static void NtfLayout() {
     g_ntf.panel = D2D1::RectF(M, M, M + pw, M + ph);
     g_ntf.view = D2D1::RectF(M, M + top, M + pw, M + ph - 4 * s);
     float by = (NtfFloating() ? 10 : 14) * s;  // centrados na pílula do topo
-    g_ntf.clearBtn = D2D1::RectF(M + pw - 84 * s, M + by, M + pw - 14 * s, M + by + 26 * s);
-    g_ntf.winBtn = D2D1::RectF(M + pw - 122 * s, M + by, M + pw - 92 * s, M + by + 26 * s);
+    float bx = NtfFloating() ? x1 - 10 * s : M + pw - 14 * s;  // soltos: a pílula tem a largura dos cartões
+    g_ntf.clearBtn = D2D1::RectF(bx - 70 * s, M + by, bx, M + by + 26 * s);
+    g_ntf.winBtn = D2D1::RectF(bx - 108 * s, M + by, bx - 78 * s, M + by + 26 * s);
     g_ntf.scroll = std::clamp(g_ntf.scroll, 0.0f, std::max(0.0f, g_ntf.contentH - (g_ntf.view.bottom - g_ntf.view.top)));
 }
 
@@ -19077,7 +19078,8 @@ static void NtfRender() {
     const bool floating = NtfFloating();
     if (floating) {
         // Sem painel atrás: o topo é uma pílula de vidro, e cada notificação o seu cartão.
-        D2D1_RECT_F head = D2D1::RectF(P.left, P.top, P.right, P.top + 46 * s);
+        // Mesma largura dos cartões.
+        D2D1_RECT_F head = D2D1::RectF(P.left + 12 * s, P.top, P.right - 12 * s, P.top + 46 * s);
         DrawLiquidGlass(rt, br, head, 23 * s, s, false, false, g_ntf.glass.ok, true);
     } else {
         DrawLiquidGlass(rt, br, P, 24 * s, s, false, false, g_ntf.glass.ok, true);
@@ -19086,7 +19088,7 @@ static void NtfRender() {
     // Topo: título, central do Windows e Limpar.
     br->SetColor(fg);
     rt->DrawText(T(L"Notificações"), (UINT32)wcslen(T(L"Notificações")), g_ntf.fHead,
-                 D2D1::RectF(P.left + 18 * s, P.top + (floating ? 8 : 12) * s, P.right - 130 * s, P.top + (floating ? 38 : 42) * s), br);
+                 D2D1::RectF(P.left + (floating ? 28 : 18) * s, P.top + (floating ? 8 : 12) * s, P.right - 130 * s, P.top + (floating ? 38 : 42) * s), br);
     {
         D2D1_RECT_F c = g_ntf.clearBtn;
         float rr = (c.bottom - c.top) / 2;
