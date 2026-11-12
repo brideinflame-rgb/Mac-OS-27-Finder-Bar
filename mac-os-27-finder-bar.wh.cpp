@@ -18915,7 +18915,9 @@ static ID2D1Bitmap* NtfAvatar(const IslandNote& n) {
 
 // Desenha uma imagem recortada em círculo (foto ou ícone do app), preenchendo-o.
 // zoom > 1 amplia um pouco, para a borda transparente do ícone não aparecer.
-static void NtfDrawRound(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, D2D1_POINT_2F c, float radius, float zoom = 1.0f) {
+static void NtfRing(ID2D1RenderTarget* rt, D2D1_POINT_2F c, float radius, float width);
+static void NtfDrawRound(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, D2D1_POINT_2F c, float radius, float zoom = 1.0f,
+                         float ring = 0) {
     ID2D1BitmapBrush* bb = nullptr;
     if (FAILED(rt->CreateBitmapBrush(bmp, &bb))) return;
     D2D1_SIZE_F ps = bmp->GetSize();
@@ -18926,6 +18928,25 @@ static void NtfDrawRound(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, D2D1_POINT_2F 
                      D2D1::Matrix3x2F::Translation(c.x - ps.width * k / 2, c.y - ps.height * k / 2));
     rt->FillEllipse(D2D1::Ellipse(c, radius, radius), bb);
     bb->Release();
+    if (ring > 0) NtfRing(rt, c, radius, ring);
+}
+
+// Aro de vidro em volta do círculo: mais claro em cima, como luz batendo na borda.
+static void NtfRing(ID2D1RenderTarget* rt, D2D1_POINT_2F c, float radius, float width) {
+    D2D1_GRADIENT_STOP st[] = {{0.0f, D2D1::ColorF(1, 1, 1, g_light ? 0.95f : 0.62f)},
+                               {0.5f, D2D1::ColorF(1, 1, 1, g_light ? 0.55f : 0.22f)},
+                               {1.0f, D2D1::ColorF(1, 1, 1, g_light ? 0.80f : 0.40f)}};
+    if (auto* g = MakeGradient(rt, D2D1::Point2F(c.x, c.y - radius), D2D1::Point2F(c.x, c.y + radius), st, 3)) {
+        float r = radius - width / 2;
+        rt->DrawEllipse(D2D1::Ellipse(c, r, r), g, width);
+        g->Release();
+    }
+    // Um contorno escuro bem fino por fora separa o círculo de fundos claros.
+    ID2D1SolidColorBrush* dark = nullptr;
+    if (SUCCEEDED(rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, g_light ? 0.10f : 0.25f), &dark))) {
+        rt->DrawEllipse(D2D1::Ellipse(c, radius + width * 0.4f, radius + width * 0.4f), dark, std::max(0.6f, width * 0.5f));
+        dark->Release();
+    }
 }
 
 // Dá para responder pela notificação (campo de texto e o ativador do app).
@@ -19271,7 +19292,8 @@ static void NtfRender() {
                     float is = 16 * s;
                     D2D1_RECT_F ir = D2D1::RectF(r.left + 14 * s, y + 1 * s, r.left + 14 * s + is, y + 1 * s + is);
                     if (ID2D1Bitmap* ic = NtfIcon(g.aumid))
-                        NtfDrawRound(rt, ic, D2D1::Point2F((ir.left + ir.right) / 2, (ir.top + ir.bottom) / 2), is / 2, 1.12f);
+                        NtfDrawRound(rt, ic, D2D1::Point2F((ir.left + ir.right) / 2, (ir.top + ir.bottom) / 2), is / 2, 1.12f,
+                                     std::max(0.8f, 0.9f * s));
                     wchar_t when[16];
                     swprintf(when, 16, L"%02d:%02d", h.at.wHour, h.at.wMinute);
                     float whenW = GmMeasure(g_ntf.fSmall, when);
@@ -19302,17 +19324,17 @@ static void NtfRender() {
                 ID2D1Bitmap* photo = NtfAvatar(h.note);
                 ID2D1Bitmap* appIcon = NtfIcon(h.note.aumid.empty() ? g.aumid : h.note.aumid);
                 if (photo) {
-                    NtfDrawRound(rt, photo, el.point, av / 2);
+                    NtfDrawRound(rt, photo, el.point, av / 2, 1.0f, std::max(1.0f, 1.6f * s));
                     if (appIcon) {
                         float bs = 20 * s;
                         D2D1_POINT_2F bc = D2D1::Point2F(ax + av - bs / 2 + 3 * s, ay + av - bs / 2 + 3 * s);
                         br->SetColor(g_light ? D2D1::ColorF(1, 1, 1, 0.95f) : D2D1::ColorF(0.10f, 0.10f, 0.11f, 0.95f));
                         rt->FillEllipse(D2D1::Ellipse(bc, bs / 2 + 1.5f * s, bs / 2 + 1.5f * s), br);
-                        NtfDrawRound(rt, appIcon, bc, bs / 2, 1.12f);
+                        NtfDrawRound(rt, appIcon, bc, bs / 2, 1.12f, std::max(0.8f, 0.9f * s));
                     }
                 } else if (appIcon) {
                     // O ícone do app, redondo como uma foto de contato.
-                    NtfDrawRound(rt, appIcon, el.point, av / 2, 1.12f);
+                    NtfDrawRound(rt, appIcon, el.point, av / 2, 1.12f, std::max(1.0f, 1.6f * s));
                 } else {
                     DWORD c = g.color;
                     br->SetColor(D2D1::ColorF(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f, 0.9f));
