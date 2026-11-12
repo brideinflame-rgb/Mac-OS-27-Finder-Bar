@@ -351,6 +351,7 @@ struct Settings {
     int menuTransp;       // transparência dos menus no estilo vidro
     int searchTarget;     // ícone de busca: 0 pesquisa do Windows, 1 Siri Plus Launchpad
     int openAnim;  // 0 nenhuma, 1 esmaecer, 2 cascata
+    int ntfIconShape;  // ícones das notificações: 0 círculo, 1 formato macOS (squircle)
     int ccCloseAnim;  // ao fechar a Central: 0 cascata, 1 encolher, 2 esmaecer, 3 deslizar para cima, 4 nenhuma
     bool showOsd;
     bool flyouts;
@@ -533,6 +534,7 @@ static const UiDefault kUiDefaults[] = {
     {L"showTray", L"1"},
     {L"ccDimScreen", L"0"},
     {L"ccCloseAnim", L"cascade"},
+    {L"ntfIconShape", L"round"},
     {L"showOsd", L"1"},
     {L"flyouts", L"1"},
     {L"showControlCenter", L"1"},
@@ -844,6 +846,7 @@ static void LoadSettings() {
     s.bgBlur = OvrInt(L"ccDimScreen") != 0;
     {
         std::wstring ca = OvrStr(L"ccCloseAnim");
+        s.ntfIconShape = OvrStr(L"ntfIconShape") == L"squircle" ? 1 : 0;
         s.ccCloseAnim = ca == L"shrink" ? 1 : ca == L"fade" ? 2 : ca == L"slide" ? 3 : ca == L"none" ? 4 : 0;
     }
     s.showOsd = OvrInt(L"showOsd") != 0;
@@ -11414,7 +11417,7 @@ enum BsVal {
     BV_BATTPCT, BV_AUTOHIDE, BV_HIDEFS, BV_SOLIDMAX, BV_ALLMON, BV_FLYOUTS, BV_OSD, BV_DIM,
     BV_G_TRANSP, BV_G_CLEAR, BV_G_LIQUID, BV_G_REFRACT, BV_G_BLUR, BV_G_LIVE, BV_WEATHER, BV_BARSTYLE, BV_HEIGHT, BV_FONT, BV_ICONS, BV_BSSTYLE, BV_BSTRANSP, BV_SELBAR, BV_SELMENU, BV_MENUGLASS, BV_MENUTRANSP, BV_UPDATES,
     BV_G_TINT, BV_SEARCHTGT, BV_LANG, BV_NPBAR, BV_ICSADD, BV_ICSCLEAR,
-    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE,
+    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE, BV_NTFSHAPE,
 };
 
 struct BsRowDef {
@@ -11498,6 +11501,7 @@ static const BsRowDef kBsRows[] = {
     {BR_GROUP, BV_NONE, L"Botão de Notificações", 0, 0},
     {BR_SWITCH, BV_ISLHIST, L"Botão de Notificações na barra (sino)", 0, 0, L"Notificações agrupadas por app, em cartões de vidro"},
     {BR_SWITCH, BV_ISLHISTNOT, L"No botão, mostrar também os avisos da pílula", 0, 0},
+    {BR_CHOICE, BV_NTFSHAPE, L"Formato dos ícones", 0, 0, L"Nas notificações: círculo ou o formato dos ícones do macOS"},
     {BR_ACTION, BV_ISLCLEAR, L"Limpar as notificações", 0, 0},
     {BR_GROUP, BV_NONE, L"Avisar quando", 0, 0},
     {BR_SWITCH, BV_WINNOTIF, L"Notificações do Windows (experimental)", 0, 0, L"WhatsApp, Discord, e-mail… Clicar abre o app"},
@@ -11603,6 +11607,8 @@ static void BsAction(int val);
 // por um instante (GlassTranspScope): os sliders leem o valor real daqui.
 static const int* g_glassTranspSaved = nullptr;
 static int GlassTranspValue() { return g_glassTranspSaved ? *g_glassTranspSaved : g_glass.transparency; }
+static void NtfRefresh();
+
 // Cores prontas do Vidro líquido personalizado (o primeiro círculo é a paleta do Windows).
 static const DWORD kTintPalette[] = {0x050505, 0x2C2C2E, 0x0B1F3A, 0x2A1446, 0x3D0B14, 0x0F2A1D, 0x1E3A5F, 0xF2F2F7};
 static_assert(ARRAYSIZE(kTintPalette) == ARRAYSIZE(kSelPalette), "a fileira de cores tem o mesmo tamanho");
@@ -11628,6 +11634,7 @@ static int BsGet(int val) {
         case BV_BARSTYLE: return g_settings.barStyle;
         case BV_G_STYLE: return g_glass.tinted ? 1 : 0;
         case BV_CCCLOSE: return g_settings.ccCloseAnim;
+        case BV_NTFSHAPE: return g_settings.ntfIconShape;
         case BV_TCOLOR: return TintPaletteIndex();
         case BV_TLEVEL: return g_settings.tintLevel;
         case BV_TREACH: return g_settings.tintReach;
@@ -11814,6 +11821,12 @@ static void BsSet(int val, int v) {
         OvrSetStr(L"barStyle", kNames[v]);
         BarsRestyle();  // troca o fundo na barra que já existe
         TintApply();    // a cor do texto da barra segue a cor do vidro
+        return;
+    }
+    if (val == BV_NTFSHAPE) {
+        g_settings.ntfIconShape = v == 1 ? 1 : 0;
+        OvrSetStr(L"ntfIconShape", g_settings.ntfIconShape ? L"squircle" : L"round");
+        NtfRefresh();  // painel aberto: muda na hora
         return;
     }
     if (val == BV_CCCLOSE) {
@@ -12116,6 +12129,7 @@ static void BsReleaseFormats() {
 static const PCWSTR kBsChoices[] = {L"Vidro", L"Transparente", L"Líquido"};
 static const PCWSTR kBsBarChoices[] = {L"Vidro", L"Transparente", L"Líquido", L"Vidro líquido personalizado"};
 static const PCWSTR kBsGlassStyle[] = {L"Transparente", L"Vidro líquido personalizado"};
+static const PCWSTR kBsNtfShape[] = {L"Círculo", L"Formato macOS"};
 static const PCWSTR kBsCcClose[] = {L"Cascata", L"Encolher", L"Esmaecer", L"Deslizar para cima", L"Nenhuma"};
 static const PCWSTR kBsLookChoices[] = {L"Desfoque", L"Líquido", L"Transparente"};
 static const PCWSTR kBsMenuChoices[] = {L"Vidro", L"Igual à Central"};
@@ -12151,12 +12165,13 @@ static const PCWSTR* BsChoiceLabels(int val) {
         case BV_BARSTYLE: return kBsBarChoices;
         case BV_G_STYLE: return kBsGlassStyle;
         case BV_CCCLOSE: return kBsCcClose;
+        case BV_NTFSHAPE: return kBsNtfShape;
     }
     return kBsChoices;
 }
 static int BsChoiceCount(int val) {
     switch (val) {
-        case BV_MENUGLASS: case BV_ISLPOS: case BV_WXUNIT: case BV_WXLOOK: case BV_NPLAYOUT: case BV_SEARCHTGT: case BV_G_STYLE: return 2;
+        case BV_MENUGLASS: case BV_ISLPOS: case BV_WXUNIT: case BV_WXLOOK: case BV_NPLAYOUT: case BV_SEARCHTGT: case BV_G_STYLE: case BV_NTFSHAPE: return 2;
         case BV_BARSTYLE: return 4;
         case BV_LANG: return (int)ARRAYSIZE(kBsLang);
         case BV_ISLIN: return 4;
@@ -18915,38 +18930,79 @@ static ID2D1Bitmap* NtfAvatar(const IslandNote& n) {
 
 // Desenha uma imagem recortada em círculo (foto ou ícone do app), preenchendo-o.
 // zoom > 1 amplia um pouco, para a borda transparente do ícone não aparecer.
-static void NtfRing(ID2D1RenderTarget* rt, D2D1_POINT_2F c, float radius, float width);
-static void NtfDrawRound(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, D2D1_POINT_2F c, float radius, float zoom = 1.0f,
-                         float ring = 0) {
-    ID2D1BitmapBrush* bb = nullptr;
-    if (FAILED(rt->CreateBitmapBrush(bmp, &bb))) return;
-    D2D1_SIZE_F ps = bmp->GetSize();
-    float d = 2 * radius * zoom;
-    float k = d / std::max(1.0f, std::min(ps.width, ps.height));
-    bb->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    bb->SetTransform(D2D1::Matrix3x2F::Scale(k, k) *
-                     D2D1::Matrix3x2F::Translation(c.x - ps.width * k / 2, c.y - ps.height * k / 2));
-    rt->FillEllipse(D2D1::Ellipse(c, radius, radius), bb);
-    bb->Release();
-    if (ring > 0) NtfRing(rt, c, radius, ring);
+// Formato dos ícones das notificações: círculo, ou o formato dos ícones do
+// macOS (um "squircle": superelipse, com os lados quase retos e os cantos
+// suaves). O caminho é montado em volta do centro c, com meia largura `radius`.
+static ID2D1Geometry* NtfIconShape(D2D1_POINT_2F c, float radius) {
+    if (g_settings.ntfIconShape == 0) {
+        ID2D1EllipseGeometry* e = nullptr;
+        g_d2d->CreateEllipseGeometry(D2D1::Ellipse(c, radius, radius), &e);
+        return e;
+    }
+    ID2D1PathGeometry* path = nullptr;
+    ID2D1GeometrySink* sink = nullptr;
+    if (FAILED(g_d2d->CreatePathGeometry(&path)) || FAILED(path->Open(&sink))) {
+        SafeRelease(path);
+        return nullptr;
+    }
+    const int kSteps = 96;
+    const double n = 5.0;  // quanto maior, mais quadrado
+    for (int i = 0; i < kSteps; i++) {
+        double t = i * 2 * 3.14159265358979 / kSteps, ct = std::cos(t), st = std::sin(t);
+        float x = c.x + radius * (float)((ct < 0 ? -1 : 1) * std::pow(std::fabs(ct), 2.0 / n));
+        float y = c.y + radius * (float)((st < 0 ? -1 : 1) * std::pow(std::fabs(st), 2.0 / n));
+        if (i == 0) sink->BeginFigure(D2D1::Point2F(x, y), D2D1_FIGURE_BEGIN_FILLED);
+        else sink->AddLine(D2D1::Point2F(x, y));
+    }
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->Close();
+    sink->Release();
+    return path;
 }
 
-// Aro de vidro em volta do círculo: mais claro em cima, como luz batendo na borda.
+// Aro de vidro em volta do formato: mais claro em cima, como luz batendo na
+// borda, e um contorno escuro bem fino por fora para fundos claros.
 static void NtfRing(ID2D1RenderTarget* rt, D2D1_POINT_2F c, float radius, float width) {
-    D2D1_GRADIENT_STOP st[] = {{0.0f, D2D1::ColorF(1, 1, 1, g_light ? 0.95f : 0.62f)},
-                               {0.5f, D2D1::ColorF(1, 1, 1, g_light ? 0.55f : 0.22f)},
-                               {1.0f, D2D1::ColorF(1, 1, 1, g_light ? 0.80f : 0.40f)}};
-    if (auto* g = MakeGradient(rt, D2D1::Point2F(c.x, c.y - radius), D2D1::Point2F(c.x, c.y + radius), st, 3)) {
-        float r = radius - width / 2;
-        rt->DrawEllipse(D2D1::Ellipse(c, r, r), g, width);
-        g->Release();
+    if (ID2D1Geometry* inner = NtfIconShape(c, radius - width / 2)) {
+        D2D1_GRADIENT_STOP st[] = {{0.0f, D2D1::ColorF(1, 1, 1, g_light ? 0.95f : 0.62f)},
+                                   {0.5f, D2D1::ColorF(1, 1, 1, g_light ? 0.55f : 0.22f)},
+                                   {1.0f, D2D1::ColorF(1, 1, 1, g_light ? 0.80f : 0.40f)}};
+        if (auto* g = MakeGradient(rt, D2D1::Point2F(c.x, c.y - radius), D2D1::Point2F(c.x, c.y + radius), st, 3)) {
+            rt->DrawGeometry(inner, g, width);
+            g->Release();
+        }
+        inner->Release();
     }
-    // Um contorno escuro bem fino por fora separa o círculo de fundos claros.
-    ID2D1SolidColorBrush* dark = nullptr;
-    if (SUCCEEDED(rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, g_light ? 0.10f : 0.25f), &dark))) {
-        rt->DrawEllipse(D2D1::Ellipse(c, radius + width * 0.4f, radius + width * 0.4f), dark, std::max(0.6f, width * 0.5f));
-        dark->Release();
+    if (ID2D1Geometry* outer = NtfIconShape(c, radius + width * 0.4f)) {
+        ID2D1SolidColorBrush* dark = nullptr;
+        if (SUCCEEDED(rt->CreateSolidColorBrush(D2D1::ColorF(0, 0, 0, g_light ? 0.10f : 0.25f), &dark))) {
+            rt->DrawGeometry(outer, dark, std::max(0.6f, width * 0.5f));
+            dark->Release();
+        }
+        outer->Release();
     }
+}
+
+// Desenha uma imagem (foto ou ícone do app) recortada no formato escolhido,
+// preenchendo-o; zoom > 1 amplia um pouco, para a borda transparente do ícone
+// não aparecer; ring > 0 põe o aro de vidro.
+static void NtfDrawRound(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, D2D1_POINT_2F c, float radius, float zoom = 1.0f,
+                         float ring = 0) {
+    ID2D1Geometry* shape = NtfIconShape(c, radius);
+    if (!shape) return;
+    ID2D1BitmapBrush* bb = nullptr;
+    if (SUCCEEDED(rt->CreateBitmapBrush(bmp, &bb))) {
+        D2D1_SIZE_F ps = bmp->GetSize();
+        float d = 2 * radius * zoom;
+        float k = d / std::max(1.0f, std::min(ps.width, ps.height));
+        bb->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+        bb->SetTransform(D2D1::Matrix3x2F::Scale(k, k) *
+                         D2D1::Matrix3x2F::Translation(c.x - ps.width * k / 2, c.y - ps.height * k / 2));
+        rt->FillGeometry(shape, bb);
+        bb->Release();
+    }
+    shape->Release();
+    if (ring > 0) NtfRing(rt, c, radius, ring);
 }
 
 // Dá para responder pela notificação (campo de texto e o ativador do app).
@@ -19329,7 +19385,10 @@ static void NtfRender() {
                         float bs = 20 * s;
                         D2D1_POINT_2F bc = D2D1::Point2F(ax + av - bs / 2 + 3 * s, ay + av - bs / 2 + 3 * s);
                         br->SetColor(g_light ? D2D1::ColorF(1, 1, 1, 0.95f) : D2D1::ColorF(0.10f, 0.10f, 0.11f, 0.95f));
-                        rt->FillEllipse(D2D1::Ellipse(bc, bs / 2 + 1.5f * s, bs / 2 + 1.5f * s), br);
+                        if (ID2D1Geometry* plate = NtfIconShape(bc, bs / 2 + 1.5f * s)) {
+                            rt->FillGeometry(plate, br);
+                            plate->Release();
+                        }
                         NtfDrawRound(rt, appIcon, bc, bs / 2, 1.12f, std::max(0.8f, 0.9f * s));
                     }
                 } else if (appIcon) {
@@ -22677,6 +22736,10 @@ const UiTr kUiTr[] = {
     {L"Cascata", L"Cascade", L"Cascada", L"Cascade", L"Kaskade", L"Cascata", L"层叠"},
     {L"Deslizar para cima", L"Slide up", L"Deslizar hacia arriba", L"Glisser vers le haut", L"Nach oben gleiten", L"Scorri verso l’alto", L"向上滑动"},
     {L"Nenhuma", L"None", L"Ninguna", L"Aucune", L"Keine", L"Nessuna", L"无"},
+    {L"Formato dos ícones", L"Icon shape", L"Forma de los iconos", L"Forme des icônes", L"Symbolform", L"Forma delle icone", L"图标形状"},
+    {L"Nas notificações: círculo ou o formato dos ícones do macOS", L"In notifications: a circle or the macOS icon shape", L"En las notificaciones: círculo o la forma de los iconos de macOS", L"Dans les notifications : un cercle ou la forme des icônes de macOS", L"In Mitteilungen: Kreis oder die Form der macOS-Symbole", L"Nelle notifiche: cerchio o la forma delle icone di macOS", L"通知中：圆形或 macOS 图标形状"},
+    {L"Círculo", L"Circle", L"Círculo", L"Cercle", L"Kreis", L"Cerchio", L"圆形"},
+    {L"Formato macOS", L"macOS shape", L"Forma de macOS", L"Forme macOS", L"macOS-Form", L"Forma macOS", L"macOS 形状"},
     {L"Ao fechar a Central", L"When the Control Center closes", L"Al cerrar el Centro de control", L"À la fermeture du Centre de contrôle", L"Beim Schließen des Kontrollzentrums", L"Alla chiusura del Centro di Controllo", L"控制中心关闭时"},
     {L"Cascata: cada linha volta para dentro da linha de cima, de baixo para cima", L"Cascade: each row slides back into the one above, from the bottom up", L"Cascada: cada fila vuelve a entrar en la de arriba, de abajo hacia arriba", L"Cascade : chaque ligne rentre dans celle du dessus, de bas en haut", L"Kaskade: Jede Reihe gleitet von unten nach oben in die darüber zurück", L"Cascata: ogni riga rientra in quella sopra, dal basso verso l’alto", L"层叠：每一行从下往上收回到上一行里"},
     {L"Sugar", L"Suck in", L"Absorber", L"Aspirer", L"Einsaugen", L"Risucchio", L"吸入"},
