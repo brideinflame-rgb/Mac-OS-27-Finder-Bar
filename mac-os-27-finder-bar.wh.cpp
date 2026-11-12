@@ -5718,7 +5718,20 @@ static void LqFree(LiquidSurface*& l) {
     l = nullptr;
 }
 
+// Um painel que está sumindo (animação de fechar) ainda está na tela quando o
+// próximo painel tira a foto do fundo, e entraria nela (ex.: a Central atrás do
+// calendário). Ele sai das capturas ao começar a fechar; a foto seguinte espera
+// o Windows redesenhar a tela uma vez sem ele.
+static bool g_captureNeedsFlush = false;
+static void HideFromCapture(HWND h) {
+    if (h && IsWindow(h) && SetWindowDisplayAffinity(h, WDA_EXCLUDEFROMCAPTURE)) g_captureNeedsFlush = true;
+}
+
 static bool LqCapture(LiquidSurface& l, RECT rc, bool hideBars = true) {
+    if (g_captureNeedsFlush) {
+        g_captureNeedsFlush = false;
+        DwmFlush();
+    }
     RECT vs = {GetSystemMetrics(SM_XVIRTUALSCREEN), GetSystemMetrics(SM_YVIRTUALSCREEN), 0, 0};
     vs.right = vs.left + GetSystemMetrics(SM_CXVIRTUALSCREEN);
     vs.bottom = vs.top + GetSystemMetrics(SM_CYVIRTUALSCREEN);
@@ -7196,6 +7209,7 @@ static void CcRefreshLocal() {
 static void CloseControlCenter(bool refocus) {
     if (!g_cc.hwnd) return;
     if (g_settings.openAnim == 0) {
+        g_captureNeedsFlush = true;
         DestroyWindow(g_cc.hwnd);  // WM_DESTROY limpa o resto
         if (refocus) FocusActive();
         return;
@@ -7204,6 +7218,8 @@ static void CloseControlCenter(bool refocus) {
     if (g_ccClosing) return;
     g_ccClosing = true;
     g_ccCloseTick = GetTickCount64();
+    HideFromCapture(g_cc.hwnd);
+    HideFromCapture(g_cc.glass);
     g_cc.animating = false;
     SetTimer(g_cc.hwnd, 6, 10, nullptr);
 }
@@ -9412,6 +9428,7 @@ static void LayoutTrayPopup() {
 static void CloseTrayPopup(bool refocus) {
     g_tray.ctxActive = false;
     if (!g_tray.hwnd) return;
+    g_captureNeedsFlush = true;  // a próxima foto do fundo sem a bandeja
     DestroyWindow(g_tray.hwnd);  // WM_DESTROY limpa o resto
     if (refocus) FocusActive();
 }
@@ -10205,6 +10222,7 @@ static void FlyApply() {
 
 static void FlyClose(bool refocus) {
     if (!g_fly.hwnd) return;
+    g_captureNeedsFlush = true;  // a próxima foto do fundo sem esta pílula
     DestroyWindow(g_fly.hwnd);
     if (refocus) FocusActive();
 }
@@ -10959,11 +10977,14 @@ static void NpRender() {
 static void NpClose() {
     if (!g_np.hwnd) return;
     if (g_settings.openAnim == 0) {
+        g_captureNeedsFlush = true;
         DestroyWindow(g_np.hwnd);
         return;
     }
     if (g_np.closing) return;
     g_np.closing = true;
+    HideFromCapture(g_np.hwnd);
+    HideFromCapture(g_np.glass.hwnd);
     g_np.closeTick = GetTickCount64();
     SetTimer(g_np.hwnd, 2, 10, nullptr);
 }
@@ -14686,7 +14707,9 @@ static void WxSetMode(bool search) {
 }
 
 static void WxClose() {
-    if (g_wxw.hwnd) DestroyWindow(g_wxw.hwnd);
+    if (!g_wxw.hwnd) return;
+    g_captureNeedsFlush = true;  // a próxima foto do fundo sem o widget
+    DestroyWindow(g_wxw.hwnd);
 }
 
 static void WxSelectPlace(const WxPlace& p) {
@@ -15851,7 +15874,9 @@ static int CalHit(float x, float y) {
 }
 
 static void CalClose() {
-    if (g_calw.hwnd) DestroyWindow(g_calw.hwnd);
+    if (!g_calw.hwnd) return;
+    g_captureNeedsFlush = true;  // a próxima foto do fundo sem o calendário
+    DestroyWindow(g_calw.hwnd);
 }
 
 static LRESULT CALLBACK CalWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -19072,11 +19097,14 @@ static int NtfHit(float x, float y) {
 static void NtfClose() {
     if (!g_ntf.hwnd) return;
     if (g_settings.openAnim == 0) {
+        g_captureNeedsFlush = true;
         DestroyWindow(g_ntf.hwnd);
         return;
     }
     if (g_ntf.closing) return;
     g_ntf.closing = true;
+    HideFromCapture(g_ntf.hwnd);
+    HideFromCapture(g_ntf.glass.hwnd);
     g_ntf.closeTick = GetTickCount64();
     SetTimer(g_ntf.hwnd, 2, 10, nullptr);
 }
