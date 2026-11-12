@@ -53,6 +53,8 @@ The settings live in the mod's own window: logo menu → **Menu Bar Settings…*
 
 Some Control Center tiles and menu items change real Windows settings, the same ones Windows' own quick settings change, and they stay changed after the mod is turned off: dark mode (app and system theme, both set to the same value), night light, power mode and power plan (a power mode also switches the plan to Balanced), energy saver, Do Not Disturb, brightness, default audio device, volume and mute, microphone mute, Wi-Fi and Bluetooth radios, Wi-Fi network and display mode. Nothing changes unless you click the matching tile or item.
 
+While the bar's volume and brightness indicator is on, Windows' own volume pill is kept minimized so only one shows. Turning the indicator or the mod off brings it back.
+
 ## Network use
 
 The mod only goes online for features you set up yourself (the calendar reads local .ics files only):

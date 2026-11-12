@@ -75,8 +75,9 @@ Small glass pills drop from the bar for headphones, audio output, low battery, c
 
 Turn on **Windows notifications** in logo → **Menu Bar Settings…** → **Notice pills** (off by default) and the bar shows your apps' notifications:
 
-- in the pill and in the bell panel, grouped by app
-- **reply** to messages (like WhatsApp) right from the pill, when the app supports replies
+- in the pill and in the bell panel, grouped by app; with liquid glass on, each notification is its own glass card in the Control Center's style
+- the sender's photo when the app sends one with the notification (WhatsApp, Discord, Teams...), with the app's icon in the corner; otherwise the app's icon
+- **reply** to messages (like WhatsApp) right from the pill or from the Reply button in the panel, when the app supports replies
 - **drag** a notification aside in the panel to clear it
 - **Only the bar shows notifications**: optional; Windows' own banners move off the screen while the bar shows them, and come back when the option or the mod is turned off
 
@@ -104,6 +105,8 @@ Some Control Center tiles and menu items change real Windows settings, the same 
 - **Brightness**, **default audio device**, **volume and mute**, **microphone mute**, **Wi-Fi and Bluetooth radios**, **Wi-Fi network** and **display mode** (projection)
 
 Nothing is changed unless you click the matching tile or item.
+
+While the bar's volume and brightness indicator is on, Windows' own volume pill is kept minimized so only one shows. Turning the indicator or the mod off brings it back.
 
 ## Network use
 
@@ -268,6 +271,7 @@ The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so
 #include <vector>
 #include <unordered_map>
 #include <functional>
+#include <memory>
 #include <map>
 #include <set>
 #include <uiautomation.h>
@@ -9874,7 +9878,38 @@ static LRESULT CALLBACK OsdWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
+// A pílula de volume e brilho do próprio Windows (a janela NativeHWNDHost com
+// um DirectUIHWND, do Explorer). Com o indicador da barra ligado, ela fica
+// minimizada, e por isso não aparece mais; volta ao normal ao desligar o
+// indicador ou o mod. O Windows só cria essa janela na primeira vez que o
+// volume muda, então ela pode aparecer uma vez antes de ser escondida.
+static HWND g_winOsdHidden = nullptr;
+static HWND FindWinOsd() {
+    HWND h = nullptr;
+    while ((h = FindWindowExW(nullptr, h, L"NativeHWNDHost", L"")) != nullptr) {
+        DWORD pid = 0;
+        GetWindowThreadProcessId(h, &pid);
+        if (pid == ShellPid() && FindWindowExW(h, nullptr, L"DirectUIHWND", L"")) return h;
+    }
+    return nullptr;
+}
+static void WinOsdApply() {
+    if (g_settings.showOsd) {
+        HWND h = FindWinOsd();
+        if (h && !IsIconic(h)) ShowWindow(h, SW_MINIMIZE);
+        if (h) g_winOsdHidden = h;
+    } else if (g_winOsdHidden) {
+        if (IsWindow(g_winOsdHidden) && IsIconic(g_winOsdHidden)) ShowWindow(g_winOsdHidden, SW_RESTORE);
+        g_winOsdHidden = nullptr;
+    }
+}
+static void WinOsdRestore() {
+    if (g_winOsdHidden && IsWindow(g_winOsdHidden) && IsIconic(g_winOsdHidden)) ShowWindow(g_winOsdHidden, SW_RESTORE);
+    g_winOsdHidden = nullptr;
+}
+
 static void OsdShow(int kind, int value, bool mute) {
+    WinOsdApply();  // a do Windows não aparece junto
     if (!g_settings.showOsd || g_menuOpen || g_cc.hwnd || !g_gm.empty() || g_bars.empty()) return;
     value = std::clamp(value, 0, 100);
     ULONGLONG now = GetTickCount64();
@@ -11386,7 +11421,7 @@ static const BsRowDef kBsRows[] = {
     {BR_SWITCH, BV_ALLMON, L"Mostrar em todos os monitores", 0, 0},
     {BR_SWITCH, BV_MORE, L"Recolher numa seta os ícones que não cabem", 0, 0, L"Como as setas ao lado do notch no macOS 27"},
     {BR_HEADER, BV_NONE, L"Menus e painéis", 0xE7C4, 0x5E5CE6, L"Estilo dos menus, Tocando agora, pílulas de volume e brilho"},
-    {BR_CHOICE, BV_MENUGLASS, L"Estilo dos menus", 0, 0, L"Menus da barra, pílula do Bluetooth, Tocando agora e Notificações. A Central de Controle não muda"},
+    {BR_CHOICE, BV_MENUGLASS, L"Estilo dos menus", 0, 0, L"Menus da barra, pílula do Bluetooth e Tocando agora. A Central de Controle e as Notificações não mudam"},
     {BR_SLIDER, BV_MENUTRANSP, L"Transparência dos menus (Vidro)", 0, 0},
     {BR_SWITCH, BV_UPDATES, L"Atualizações pendentes no menu do logo", 0, 0},
     {BR_SWITCH, BV_KBDNAV, L"Ctrl+F2 navega a barra pelo teclado", 0, 0},
@@ -16662,6 +16697,8 @@ struct IslandNote {
     bool isNotif = false;  // notificação de um app (e não um aviso do próprio mod)
     std::wstring app, body, aumid;  // notificação: app, mensagem e o id do app (ícone)
     NotifReply reply;               // notificação: responder e abrir pelo app
+    std::shared_ptr<const std::string> avatar;  // notificação: a foto de quem mandou (arquivo da imagem)
+    unsigned avatarId = 0;                      // para guardar a foto já decodificada
 };
 struct IslandWnd {
     HWND hwnd = nullptr;
@@ -17896,6 +17933,7 @@ struct NotifMsg {
     std::wstring app, aumid;
     std::vector<std::wstring> texts;
     NotifReply reply;
+    std::shared_ptr<const std::string> avatar;  // a foto de quem mandou, se o app mandou uma
     IslandNote note;      // 5/6: a notificação respondida
     std::wstring answer;  // 5/6: o texto
 };
@@ -18090,6 +18128,39 @@ static bool FindActivator(const std::wstring& aumid, CLSID* out) {
     return false;
 }
 
+// Caminho no disco de uma imagem do toast: file:///, um caminho comum ou
+// ms-appdata:/// (as pastas do pacote do app). Endereços da internet não.
+static std::wstring ToastImagePath(const std::wstring& aumid, std::wstring src) {
+    auto unescape = [](const std::wstring& u) {
+        std::wstring o;
+        for (size_t i = 0; i < u.size(); i++) {
+            if (u[i] == L'%' && i + 2 < u.size() && iswxdigit(u[i + 1]) && iswxdigit(u[i + 2])) {
+                o += (wchar_t)wcstoul(u.substr(i + 1, 2).c_str(), nullptr, 16);
+                i += 2;
+            } else {
+                o += u[i] == L'/' ? L'\\' : u[i];
+            }
+        }
+        return o;
+    };
+    auto starts = [&](PCWSTR p) { return _wcsnicmp(src.c_str(), p, wcslen(p)) == 0; };
+    if (starts(L"file:///")) return unescape(src.substr(8));
+    if (src.size() > 2 && src[1] == L':' && (src[2] == L'\\' || src[2] == L'/')) return unescape(src);
+    static const struct { PCWSTR prefix, folder; } kAppData[] = {
+        {L"ms-appdata:///local/", L"LocalState"}, {L"ms-appdata:///temp/", L"TempState"},
+        {L"ms-appdata:///roaming/", L"RoamingState"}};
+    for (const auto& a : kAppData) {
+        if (!starts(a.prefix)) continue;
+        size_t bang = aumid.find(L'!');
+        if (bang == std::wstring::npos) return L"";
+        wchar_t local[MAX_PATH];
+        if (!GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) return L"";
+        return std::wstring(local) + L"\\Packages\\" + aumid.substr(0, bang) + L"\\" + a.folder + L"\\" +
+               unescape(src.substr(wcslen(a.prefix)));
+    }
+    return L"";
+}
+
 // Monta o que dá para fazer com a notificação (na thread das notificações).
 [[maybe_unused]] static void NotifReadReply(NotifMsg* m) {
     if (m->aumid.empty()) return;
@@ -18097,6 +18168,24 @@ static bool FindActivator(const std::wstring& aumid, CLSID* out) {
     std::wstring xml = NotifPayload(m->aumid, title);
     if (xml.empty()) return;
     NotifReply& r = m->reply;
+    // A foto de quem mandou: a imagem que o app põe no lugar do ícone (WhatsApp,
+    // Discord, Teams...). Lida já, porque alguns apps apagam o arquivo depois.
+    for (const std::wstring& img : XmlTags(xml, L"image")) {
+        if (XmlAttr(img, L"placement") != L"appLogoOverride") continue;
+        std::wstring path = ToastImagePath(m->aumid, XmlAttr(img, L"src"));
+        if (path.empty()) break;
+        HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_EXISTING, 0, nullptr);
+        if (f == INVALID_HANDLE_VALUE) break;
+        LARGE_INTEGER size{};
+        if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
+            auto data = std::make_shared<std::string>((size_t)size.QuadPart, '\0');
+            DWORD got = 0;
+            if (ReadFile(f, &(*data)[0], (DWORD)data->size(), &got, nullptr) && got == data->size()) m->avatar = data;
+        }
+        CloseHandle(f);
+        break;
+    }
     std::vector<std::wstring> toast = XmlTags(xml, L"toast");
     if (!toast.empty()) {
         std::wstring type = XmlAttr(toast[0], L"activationType");
@@ -18634,6 +18723,11 @@ static void NotifOnMsg(NotifMsg* m) {
             n.body = body;
             n.aumid = m->aumid;
             n.reply = m->reply;
+            if (m->avatar) {
+                static unsigned nextAvatar = 0;
+                n.avatar = m->avatar;
+                n.avatarId = ++nextAvatar;
+            }
             IslandPush(n, false);
         }
     }
@@ -18653,6 +18747,7 @@ struct NtfBlock {
     D2D1_RECT_F r;   // em coordenadas do conteúdo
     int group = -1;
     std::vector<int> items;  // índices em g_islHist (o primeiro é o mais novo)
+    D2D1_RECT_F reply{};     // cartão: o botão Responder (vazio se não dá para responder)
 };
 struct NtfGroup {
     std::wstring app, aumid;
@@ -18673,6 +18768,7 @@ struct NotifPanel {
     std::set<std::wstring> expanded;
     float contentH = 0, scroll = 0;
     int hover = -1;  // bloco; -2 Limpar, -3 central do Windows
+    bool hoverReply = false;  // o mouse está no botão Responder
     bool tracking = false, closing = false;
     // Arrastar para o lado apaga a notificação (só ela).
     int swipeBlock = -1, swipeItem = -1;
@@ -18687,6 +18783,7 @@ struct NotifPanel {
     IDWriteTextFormat *fHead = nullptr, *fApp = nullptr, *fTitle = nullptr, *fBody = nullptr, *fSmall = nullptr,
                       *fIcon = nullptr, *fAvatar = nullptr;
     std::map<std::wstring, ID2D1Bitmap*> icons;  // aumid -> ícone (deste alvo de desenho)
+    std::map<unsigned, ID2D1Bitmap*> avatars;    // foto de quem mandou, já decodificada
 };
 // Guardado num optional sem destrutor automático: os objetos de composição
 // dentro dele são liberados na thread da barra (FreePanelGlobals), nunca no
@@ -18737,6 +18834,28 @@ static ID2D1Bitmap* NtfIcon(const std::wstring& aumid) {
     return bmp;
 }
 
+// A foto que veio na notificação, decodificada uma vez para este alvo de desenho.
+static ID2D1Bitmap* NtfAvatar(const IslandNote& n) {
+    if (!n.avatar || n.avatar->empty() || !n.avatarId || !g_ntf.rt) return nullptr;
+    auto it = g_ntf.avatars.find(n.avatarId);
+    if (it != g_ntf.avatars.end()) return it->second;
+    std::vector<BYTE> bytes(n.avatar->begin(), n.avatar->end());
+    ID2D1Bitmap* bmp = DecodeImage(g_ntf.rt, bytes);
+    if (g_ntf.avatars.size() > 60) {
+        for (auto& kv : g_ntf.avatars) SafeRelease(kv.second);
+        g_ntf.avatars.clear();
+    }
+    g_ntf.avatars[n.avatarId] = bmp;
+    return bmp;
+}
+
+// Dá para responder pela notificação (campo de texto e o ativador do app).
+static bool NtfCanReply(const IslandNote& n) { return n.reply.canReply && n.reply.hasActivator; }
+
+// Os cartões ficam soltos, cada um com o vidro da Central, quando o vidro
+// líquido está ligado; sem ele, o painel único de antes.
+static bool NtfFloating() { return g_glass.liquid; }
+
 static void NtfBuildGroups() {
     g_ntf.groups.clear();
     for (int i = (int)g_islHist.size() - 1; i >= 0; i--) {
@@ -18763,12 +18882,13 @@ static void NtfLayout() {
     float y = 0;
     for (size_t gi = 0; gi < g_ntf.groups.size(); gi++) {
         const NtfGroup& g = g_ntf.groups[gi];
-        g_ntf.blocks.push_back({0, D2D1::RectF(x0, y, x1, y + 28 * s), (int)gi, {}});
-        y += 30 * s;
+        // O ícone e o nome do app ficam dentro do cartão, na linha da hora.
         bool open = g_ntf.expanded.count(g.app) > 0;
         int extra = (int)g.items.size() - 1;
-        float h = NtfCardH(s) + (open ? extra * NtfRowH(s) : 0) + (extra > 0 ? 34 * s : 0);
+        bool canReply = !g.items.empty() && NtfCanReply(g_islHist[g.items[0]].note);
+        float h = NtfCardH(s) + (open ? extra * NtfRowH(s) : 0) + (extra > 0 || canReply ? 34 * s : 0);
         NtfBlock card{1, D2D1::RectF(x0, y, x1, y + h), (int)gi, g.items};
+        if (canReply) card.reply = D2D1::RectF(x1 - 12 * s - 104 * s, y + h - 32 * s, x1 - 12 * s, y + h - 8 * s);
         g_ntf.blocks.push_back(card);
         if (extra > 0)
             g_ntf.blocks.push_back({2, D2D1::RectF(x0 + 12 * s, y + h - 32 * s, x0 + 12 * s + 150 * s, y + h - 8 * s), (int)gi, {}});
@@ -18785,11 +18905,13 @@ static void NtfLayout() {
         if (!avisos.empty()) {
             g_ntf.blocks.push_back({3, D2D1::RectF(x0, y, x1, y + 28 * s), -1, {}});
             y += 30 * s;
-            float h = avisos.size() * 48 * s + 8 * s;
+            // Soltos, cada aviso é um cartão com um respiro entre eles.
+            float step = NtfFloating() ? 56 * s : 48 * s;
+            float h = avisos.size() * step + 8 * s;
             float yy = y + 4 * s;
             for (int i : avisos) {
                 g_ntf.blocks.push_back({4, D2D1::RectF(x0, yy, x1, yy + 48 * s), -1, {i}});
-                yy += 48 * s;
+                yy += step;
             }
             y += h + 12 * s;
         }
@@ -18804,14 +18926,17 @@ static void NtfLayout() {
     float ph = std::min(maxH, top + y + 4 * s);
     g_ntf.panel = D2D1::RectF(M, M, M + pw, M + ph);
     g_ntf.view = D2D1::RectF(M, M + top, M + pw, M + ph - 4 * s);
-    g_ntf.clearBtn = D2D1::RectF(M + pw - 84 * s, M + 14 * s, M + pw - 14 * s, M + 40 * s);
-    g_ntf.winBtn = D2D1::RectF(M + pw - 122 * s, M + 14 * s, M + pw - 92 * s, M + 40 * s);
+    float by = (NtfFloating() ? 10 : 14) * s;  // centrados na pílula do topo
+    g_ntf.clearBtn = D2D1::RectF(M + pw - 84 * s, M + by, M + pw - 14 * s, M + by + 26 * s);
+    g_ntf.winBtn = D2D1::RectF(M + pw - 122 * s, M + by, M + pw - 92 * s, M + by + 26 * s);
     g_ntf.scroll = std::clamp(g_ntf.scroll, 0.0f, std::max(0.0f, g_ntf.contentH - (g_ntf.view.bottom - g_ntf.view.top)));
 }
 
 static void NtfReleaseGraphics() {
     for (auto& kv : g_ntf.icons) SafeRelease(kv.second);
     g_ntf.icons.clear();
+    for (auto& kv : g_ntf.avatars) SafeRelease(kv.second);
+    g_ntf.avatars.clear();
     SafeRelease(g_ntf.brush);
     SafeRelease(g_ntf.rt);
     if (g_ntf.memDC) {
@@ -18861,8 +18986,7 @@ static void NtfDrawText(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, const s
 
 static void NtfRender() {
     if (!g_ntf.hwnd) return;
-    MenuGlassScope menuGlass;
-    PanelThemeScope panelTheme;
+    PanelThemeScope panelTheme;  // o vidro é o da Central (não o dos menus)
     LiquidScope liquid(g_ntf.glass.lq, g_ntf.hwnd);
     float s = g_ntf.s;
     if (!g_ntf.fHead) {
@@ -18950,11 +19074,19 @@ static void NtfRender() {
     rt->BeginDraw();
     rt->Clear(D2D1::ColorF(0, 0, 0, 0));
     if (anim) PushAnim(rt, layer, pv, pivot);
-    DrawLiquidGlass(rt, br, P, 24 * s, s, false, false, g_ntf.glass.ok, true);
+    const bool floating = NtfFloating();
+    if (floating) {
+        // Sem painel atrás: o topo é uma pílula de vidro, e cada notificação o seu cartão.
+        D2D1_RECT_F head = D2D1::RectF(P.left, P.top, P.right, P.top + 46 * s);
+        DrawLiquidGlass(rt, br, head, 23 * s, s, false, false, g_ntf.glass.ok, true);
+    } else {
+        DrawLiquidGlass(rt, br, P, 24 * s, s, false, false, g_ntf.glass.ok, true);
+    }
 
     // Topo: título, central do Windows e Limpar.
     br->SetColor(fg);
-    rt->DrawText(T(L"Notificações"), (UINT32)wcslen(T(L"Notificações")), g_ntf.fHead, D2D1::RectF(P.left + 18 * s, P.top + 12 * s, P.right - 130 * s, P.top + 42 * s), br);
+    rt->DrawText(T(L"Notificações"), (UINT32)wcslen(T(L"Notificações")), g_ntf.fHead,
+                 D2D1::RectF(P.left + 18 * s, P.top + (floating ? 8 : 12) * s, P.right - 130 * s, P.top + (floating ? 38 : 42) * s), br);
     {
         D2D1_RECT_F c = g_ntf.clearBtn;
         float rr = (c.bottom - c.top) / 2;
@@ -19034,30 +19166,45 @@ static void NtfRender() {
             rt->DrawText(g.app.c_str(), (UINT32)g.app.size(), g_ntf.fApp, D2D1::RectF(ir.right + 8 * s, r.top, r.right, r.bottom), br,
                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
         } else if (b.kind == 1) {
-            // Cartão: hora + seta, a "foto" (inicial) e o texto; grupo aberto mostra todos.
+            // Cartão: ícone e nome do app, hora e seta; a foto de quem mandou e o
+            // texto; o botão Responder. Grupo aberto mostra todos.
             const NtfGroup& g = g_ntf.groups[b.group];
             D2D1_ROUNDED_RECT rr = D2D1::RoundedRect(r, 18 * s, 18 * s);
-            GlassCard(rt, br, rr,
-                      hot ? (g_light ? D2D1::ColorF(1, 1, 1, 0.55f) : D2D1::ColorF(1, 1, 1, 0.16f))
-                          : (g_light ? D2D1::ColorF(1, 1, 1, 0.40f) : D2D1::ColorF(1, 1, 1, 0.09f)),
-                      s);
-            br->SetColor(g_light ? D2D1::ColorF(1, 1, 1, 0.85f) : D2D1::ColorF(1, 1, 1, 0.30f));
-            rt->DrawRoundedRectangle(rr, br, 1.2f * s);
+            if (floating) {
+                DrawLiquidGlass(rt, br, r, 20 * s, s, false, hot, g_ntf.glass.ok, true);
+            } else {
+                GlassCard(rt, br, rr,
+                          hot ? (g_light ? D2D1::ColorF(1, 1, 1, 0.55f) : D2D1::ColorF(1, 1, 1, 0.16f))
+                              : (g_light ? D2D1::ColorF(1, 1, 1, 0.40f) : D2D1::ColorF(1, 1, 1, 0.09f)),
+                          s);
+                br->SetColor(g_light ? D2D1::ColorF(1, 1, 1, 0.85f) : D2D1::ColorF(1, 1, 1, 0.30f));
+                rt->DrawRoundedRectangle(rr, br, 1.2f * s);
+            }
             bool open = g_ntf.expanded.count(g.app) > 0;
             size_t n = open ? b.items.size() : 1;
             float y = r.top + 10 * s;
             for (size_t k = 0; k < n; k++) {
                 const IslandHist& h = g_islHist[b.items[k]];
                 if (k == 0) {
+                    // Linha de cima: ícone e nome do app; a hora (e a seta do grupo) à direita.
+                    float is = 16 * s;
+                    D2D1_RECT_F ir = D2D1::RectF(r.left + 14 * s, y + 1 * s, r.left + 14 * s + is, y + 1 * s + is);
+                    if (ID2D1Bitmap* ic = NtfIcon(g.aumid)) rt->DrawBitmap(ic, ir, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
                     wchar_t when[16];
                     swprintf(when, 16, L"%02d:%02d", h.at.wHour, h.at.wMinute);
+                    float whenW = GmMeasure(g_ntf.fSmall, when);
+                    float chevW = b.items.size() > 1 ? 20 * s : 0;
+                    float right = r.right - 14 * s;
                     br->SetColor(dim);
-                    rt->DrawText(when, (UINT32)wcslen(when), g_ntf.fSmall, D2D1::RectF(r.left + 14 * s, y, r.left + 70 * s, y + 18 * s), br);
+                    rt->DrawText(g.app.c_str(), (UINT32)g.app.size(), g_ntf.fSmall,
+                                 D2D1::RectF(ir.right + 7 * s, y, right - whenW - chevW - 8 * s, y + 18 * s), br,
+                                 D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    rt->DrawText(when, (UINT32)wcslen(when), g_ntf.fSmall, D2D1::RectF(right - chevW - whenW, y, right - chevW + 2 * s, y + 18 * s), br);
                     if (b.items.size() > 1) {
                         IDWriteTextLayout* l = nullptr;
                         wchar_t chev = open ? 0xE70E : 0xE70D;
                         if (SUCCEEDED(g_dwrite->CreateTextLayout(&chev, 1, g_ntf.fIcon, 18 * s, 18 * s, &l))) {
-                            rt->DrawTextLayout(D2D1::Point2F(r.left + 54 * s, y), l, br);
+                            rt->DrawTextLayout(D2D1::Point2F(right - 17 * s, y), l, br);
                             l->Release();
                         }
                     }
@@ -19066,20 +19213,67 @@ static void NtfRender() {
                     br->SetColor(g_light ? D2D1::ColorF(0, 0, 0, 0.08f) : D2D1::ColorF(1, 1, 1, 0.10f));
                     rt->FillRectangle(D2D1::RectF(r.left + 72 * s, y - 6 * s, r.right - 14 * s, y - 5 * s), br);
                 }
-                // A "foto" de quem mandou: círculo com as iniciais, na cor do app.
+                // A foto de quem mandou (com o ícone do app no canto); sem foto, o
+                // ícone do app; sem os dois, as iniciais na cor do app.
                 float av = 48 * s, ax = r.left + 14 * s, ay = y;
-                DWORD c = g.color;
                 D2D1_ELLIPSE el = D2D1::Ellipse(D2D1::Point2F(ax + av / 2, ay + av / 2), av / 2, av / 2);
-                br->SetColor(D2D1::ColorF(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f, 0.9f));
-                rt->FillEllipse(el, br);
-                std::wstring ini = NtfInitials(h.note.title);
-                br->SetColor(D2D1::ColorF(1, 1, 1, 1));
-                rt->DrawText(ini.c_str(), (UINT32)ini.size(), g_ntf.fAvatar, D2D1::RectF(ax, ay, ax + av, ay + av), br);
+                ID2D1Bitmap* photo = NtfAvatar(h.note);
+                ID2D1Bitmap* appIcon = NtfIcon(h.note.aumid.empty() ? g.aumid : h.note.aumid);
+                if (photo) {
+                    ID2D1BitmapBrush* bb = nullptr;
+                    if (SUCCEEDED(rt->CreateBitmapBrush(photo, &bb))) {
+                        D2D1_SIZE_F ps = photo->GetSize();
+                        float k2 = av / std::max(1.0f, std::min(ps.width, ps.height));  // preenche o círculo
+                        bb->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                        bb->SetTransform(D2D1::Matrix3x2F::Scale(k2, k2) *
+                                         D2D1::Matrix3x2F::Translation(ax - (ps.width * k2 - av) / 2, ay - (ps.height * k2 - av) / 2));
+                        rt->FillEllipse(el, bb);
+                        bb->Release();
+                    }
+                    if (appIcon) {
+                        float bs = 20 * s, bx = ax + av - bs + 3 * s, byy = ay + av - bs + 3 * s;
+                        br->SetColor(g_light ? D2D1::ColorF(1, 1, 1, 0.95f) : D2D1::ColorF(0.10f, 0.10f, 0.11f, 0.95f));
+                        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(bx + bs / 2, byy + bs / 2), bs / 2 + 1.5f * s, bs / 2 + 1.5f * s), br);
+                        rt->DrawBitmap(appIcon, D2D1::RectF(bx + 2 * s, byy + 2 * s, bx + bs - 2 * s, byy + bs - 2 * s), 1.0f,
+                                       D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    }
+                } else if (appIcon) {
+                    float pad = 4 * s;
+                    rt->DrawBitmap(appIcon, D2D1::RectF(ax + pad, ay + pad, ax + av - pad, ay + av - pad), 1.0f,
+                                   D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                } else {
+                    DWORD c = g.color;
+                    br->SetColor(D2D1::ColorF(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f, 0.9f));
+                    rt->FillEllipse(el, br);
+                    std::wstring ini = NtfInitials(h.note.title);
+                    br->SetColor(D2D1::ColorF(1, 1, 1, 1));
+                    rt->DrawText(ini.c_str(), (UINT32)ini.size(), g_ntf.fAvatar, D2D1::RectF(ax, ay, ax + av, ay + av), br);
+                }
                 float tx = ax + av + 12 * s, tr = r.right - 14 * s;
                 NtfDrawText(rt, br, h.note.title, g_ntf.fTitle, D2D1::RectF(tx, ay, tr, ay + 22 * s), fg, 1);
                 std::wstring body = h.note.body.empty() ? h.note.sub : h.note.body;
                 NtfDrawText(rt, br, body, g_ntf.fBody, D2D1::RectF(tx, ay + 22 * s, tr, ay + (k == 0 ? 58 : 44) * s), dim, 2);
                 y += k == 0 ? 66 * s : NtfRowH(s);
+            }
+            if (b.reply.right > b.reply.left) {
+                // Responder: abre o campo na pílula, que envia pelo app.
+                D2D1_RECT_F c = D2D1::RectF(b.reply.left, b.reply.top + oy, b.reply.right, b.reply.bottom + oy);
+                float cr = (c.bottom - c.top) / 2;
+                GlassCard(rt, br, D2D1::RoundedRect(c, cr, cr),
+                          g_ntf.hoverReply && g_ntf.hover == (int)bi ? (g_light ? D2D1::ColorF(0, 0, 0, 0.14f) : D2D1::ColorF(1, 1, 1, 0.26f))
+                                           : (g_light ? D2D1::ColorF(0, 0, 0, 0.07f) : D2D1::ColorF(1, 1, 1, 0.14f)),
+                          s);
+                IDWriteTextLayout* l = nullptr;
+                std::wstring label = std::wstring(L"\xE97A  ") + T(L"Responder");
+                if (SUCCEEDED(g_dwrite->CreateTextLayout(label.c_str(), (UINT32)label.size(), g_ntf.fSmall, c.right - c.left, c.bottom - c.top, &l))) {
+                    l->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                    l->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                    DWRITE_TEXT_RANGE glyph = {0, 1};
+                    l->SetFontFamilyName(g_iconFont.c_str(), glyph);
+                    br->SetColor(fg);
+                    rt->DrawTextLayout(D2D1::Point2F(c.left, c.top), l, br);
+                    l->Release();
+                }
             }
         } else if (b.kind == 2) {
             // Chip "+N notificações" / "Mostrar menos".
@@ -19100,15 +19294,25 @@ static void NtfRender() {
             rt->DrawText(t.c_str(), (UINT32)t.size(), g_ntf.fSmall, c, br);
             g_ntf.fSmall->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
         } else if (b.kind == 3) {
+            if (floating) {
+                // O título fica numa pílula de vidro, para ler sobre qualquer fundo.
+                float tw = GmMeasure(g_ntf.fApp, T(L"Avisos da pílula")) + 28 * s;
+                D2D1_RECT_F c = D2D1::RectF(r.left, r.top + 1 * s, r.left + tw, r.bottom - 1 * s);
+                DrawLiquidGlass(rt, br, c, (c.bottom - c.top) / 2, s, false, false, g_ntf.glass.ok, false);
+            }
             br->SetColor(fg);
-            rt->DrawText(T(L"Avisos da pílula"), (UINT32)wcslen(T(L"Avisos da pílula")), g_ntf.fApp, D2D1::RectF(r.left + 4 * s, r.top, r.right, r.bottom), br);
+            rt->DrawText(T(L"Avisos da pílula"), (UINT32)wcslen(T(L"Avisos da pílula")), g_ntf.fApp,
+                         D2D1::RectF(r.left + (floating ? 14 : 4) * s, r.top, r.right, r.bottom), br);
         } else if (b.kind == 4) {
             const IslandHist& h = g_islHist[b.items[0]];
             D2D1_RECT_F card = D2D1::RectF(r.left, r.top + 2 * s, r.right, r.bottom - 2 * s);
-            GlassCard(rt, br, D2D1::RoundedRect(card, 14 * s, 14 * s),
-                      hot ? (g_light ? D2D1::ColorF(1, 1, 1, 0.55f) : D2D1::ColorF(1, 1, 1, 0.15f))
-                          : (g_light ? D2D1::ColorF(1, 1, 1, 0.35f) : D2D1::ColorF(1, 1, 1, 0.07f)),
-                      s);
+            if (floating)
+                DrawLiquidGlass(rt, br, card, 16 * s, s, false, hot, g_ntf.glass.ok, true);
+            else
+                GlassCard(rt, br, D2D1::RoundedRect(card, 14 * s, 14 * s),
+                          hot ? (g_light ? D2D1::ColorF(1, 1, 1, 0.55f) : D2D1::ColorF(1, 1, 1, 0.15f))
+                              : (g_light ? D2D1::ColorF(1, 1, 1, 0.35f) : D2D1::ColorF(1, 1, 1, 0.07f)),
+                          s);
             float cy = (card.top + card.bottom) / 2, ir = 14 * s, ix = card.left + 12 * s + ir;
             DWORD c = h.note.color;
             br->SetColor(D2D1::ColorF(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f, 1));
@@ -19125,6 +19329,7 @@ static void NtfRender() {
             NtfDrawText(rt, br, h.note.title, g_ntf.fTitle, D2D1::RectF(tx, card.top + 4 * s, card.right - 64 * s, cy + 2 * s), fg, 1);
             NtfDrawText(rt, br, h.note.sub, g_ntf.fBody, D2D1::RectF(tx, cy, card.right - 12 * s, card.bottom - 4 * s), dim, 1);
         } else if (b.kind == 5) {
+            if (floating) DrawLiquidGlass(rt, br, r, 20 * s, s, false, false, g_ntf.glass.ok, true);
             g_ntf.fBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             g_ntf.fBody->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
             br->SetColor(dim);
@@ -19198,6 +19403,30 @@ static void NtfRefresh() {
 }
 
 // A notificação (índice em g_islHist) sob o ponto y de um cartão ou aviso.
+// O ponto (da janela) está no botão Responder do cartão `h`.
+static bool NtfOnReply(int h, float x, float y) {
+    if (h < 0 || h >= (int)g_ntf.blocks.size()) return false;
+    const D2D1_RECT_F& c = g_ntf.blocks[h].reply;
+    float cy = y - g_ntf.view.top + g_ntf.scroll;
+    return c.right > c.left && x >= c.left && x < c.right && cy >= c.top && cy < c.bottom;
+}
+
+// Responder pelo painel: fecha o painel e abre o campo de resposta na pílula.
+static void NtfReplyTo(const IslandNote& n) {
+    NtfClose();
+    if (!g_isl.hwnd) {
+        IslandStart(n);
+    } else if (!g_isl.reply) {
+        g_isl.note = n;
+    } else {
+        g_isl.note = n;
+        g_isl.text.clear();
+        IslandRender();
+        return;
+    }
+    IslandEnterReply();
+}
+
 static int NtfItemAt(const NtfBlock& b, float y) {
     int item = b.items.empty() ? -1 : b.items[0];
     if (b.kind == 1 && b.group >= 0 && g_ntf.expanded.count(g_ntf.groups[b.group].app)) {
@@ -19278,8 +19507,10 @@ static LRESULT CALLBACK NtfWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g_ntf.tracking = true;
             }
             int h = NtfHit((float)LP_X(lp), (float)LP_Y(lp));
-            if (h != g_ntf.hover) {
+            bool onReply = NtfOnReply(h, (float)LP_X(lp), (float)LP_Y(lp));
+            if (h != g_ntf.hover || onReply != g_ntf.hoverReply) {
                 g_ntf.hover = h;
+                g_ntf.hoverReply = onReply;
                 NtfRender();
             }
             return 0;
@@ -19324,6 +19555,9 @@ static LRESULT CALLBACK NtfWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (h == -3) {
                 NtfClose();
                 SendKeys(M_WIN, 'N');
+            } else if (NtfOnReply(h, x, y)) {
+                NtfBlock b = g_ntf.blocks[h];
+                if (!b.items.empty() && b.items[0] < (int)g_islHist.size()) NtfReplyTo(g_islHist[b.items[0]].note);
             } else if (h >= 0 && h < (int)g_ntf.blocks.size()) {
                 NtfBlock b = g_ntf.blocks[h];
                 if (b.kind == 2 || (b.kind == 1 && b.items.size() > 1 && y - g_ntf.view.top + g_ntf.scroll < b.r.top + 32 * g_ntf.s)) {
@@ -19338,7 +19572,9 @@ static LRESULT CALLBACK NtfWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     if (item >= 0 && item < (int)g_islHist.size()) {
                         IslandNote n = g_islHist[item].note;
                         NtfClose();
-                        IslandRunAction(n);
+                        // Pelo ativador do app abre a conversa certa; senão, o app.
+                        if (n.reply.hasActivator && !n.reply.launch.empty()) ReplySend(n, L"", true);
+                        else IslandRunAction(n);
                     }
                 }
             }
@@ -19406,11 +19642,7 @@ static void NtfToggle(Bar* b, int idx) {
         g_ntf.bar = nullptr;
         return;
     }
-    bool ok;
-    {
-        MenuGlassScope menuGlass;
-        ok = GlassLayerCreate(g_ntf.glass, g_ntf.pos, g_ntf.W, g_ntf.H);
-    }
+    bool ok = GlassLayerCreate(g_ntf.glass, g_ntf.pos, g_ntf.W, g_ntf.H);
     if (ok) {
         GlassLayerShapes(g_ntf.glass, {{g_ntf.panel, 24 * s}});
         GlassLayerOpacity(g_ntf.glass, 1.0f);
@@ -20881,6 +21113,7 @@ static void BarsApplyLive(bool geometry) {
     KbdNavApply();
     NotifApply();
     if (g_settings.showWeather && !g_wx.data.ok) WxRefresh();
+    WinOsdApply();  // o indicador da barra pode ter sido ligado ou desligado
     RedrawAll();
 }
 
@@ -21750,6 +21983,7 @@ static DWORD WINAPI BarThread(LPVOID) {
     WxRefresh();
     SetTimer(g_owner, TIMER_WEATHER, WxIntervalMs(), nullptr);
     InstallTrayHook();
+    WinOsdApply();
     RegisterVolumeCallback();
 
     g_fgHook = SetWinEventHook(EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND, nullptr,
@@ -21797,6 +22031,7 @@ static DWORD WINAPI BarThread(LPVOID) {
     FlushSaves();  // sliders mexidos há pouco
     // 1) A janela que recebe os ícones da bandeja do shell, e o aviso de janela ativa.
     RemoveTrayHook();
+    WinOsdRestore();
     if (g_fgHook) { UnhookWinEvent(g_fgHook); g_fgHook = nullptr; }
     // 2) Threads de trabalho: cancela o que estiver em andamento e espera todas.
     UiaStop();
@@ -22511,7 +22746,8 @@ const UiTr kUiTr[] = {
     {L"Linha colorida", L"Colored line", L"Línea de color", L"Ligne colorée", L"Farbige Linie", L"Linea colorata", L"彩色线条"},
     {L"Somente a barra mostra as notificações", L"Only the bar shows notifications", L"Solo la barra muestra las notificaciones", L"Seule la barre affiche les notifications", L"Nur die Leiste zeigt Mitteilungen", L"Solo la barra mostra le notifiche", L"仅由菜单栏显示通知"},
     {L"Tira as faixas do Windows da tela; chamadas, alarmes e lembretes continuam", L"Takes the Windows banners off the screen; calls, alarms and reminders stay", L"Quita los banners de Windows de la pantalla; las llamadas, alarmas y recordatorios se mantienen", L"Retire les bannières Windows de l’écran ; appels, alarmes et rappels restent", L"Nimmt die Windows-Banner vom Bildschirm; Anrufe, Wecker und Erinnerungen bleiben", L"Toglie i banner di Windows dallo schermo; chiamate, sveglie e promemoria restano", L"将 Windows 横幅移出屏幕; 来电、闹钟和提醒仍会显示"},
-    {L"Menus da barra, pílula do Bluetooth, Tocando agora e Notificações. A Central de Controle não muda", L"Bar menus, the Bluetooth pill, Now Playing and Notifications. The Control Center doesn’t change", L"Menús de la barra, píldora de Bluetooth, Reproduciendo y Notificaciones. El Centro de control no cambia", L"Menus de la barre, pastille Bluetooth, À l’écoute et Notifications. Le Centre de contrôle ne change pas", L"Leistenmenüs, Bluetooth-Pille, Aktuelle Wiedergabe und Mitteilungen. Das Kontrollzentrum ändert sich nicht", L"Menu della barra, pillola Bluetooth, In riproduzione e Notifiche. Il Centro di Controllo non cambia", L"菜单栏菜单、蓝牙胶囊、正在播放和通知。控制中心不受影响"},
+    {L"Menus da barra, pílula do Bluetooth e Tocando agora. A Central de Controle e as Notificações não mudam", L"Bar menus, the Bluetooth pill and Now Playing. The Control Center and Notifications don’t change", L"Menús de la barra, píldora de Bluetooth y Reproduciendo. El Centro de control y las Notificaciones no cambian", L"Menus de la barre, pastille Bluetooth et À l’écoute. Le Centre de contrôle et les Notifications ne changent pas", L"Leistenmenüs, Bluetooth-Pille und Aktuelle Wiedergabe. Kontrollzentrum und Mitteilungen ändern sich nicht", L"Menu della barra, pillola Bluetooth e In riproduzione. Il Centro di Controllo e le Notifiche non cambiano", L"菜单栏菜单、蓝牙胶囊和正在播放。控制中心和通知不受影响"},
+    {L"Responder", L"Reply", L"Responder", L"Répondre", L"Antworten", L"Rispondi", L"回复"},
     {L"Digite uma resposta", L"Type a reply", L"Escribe una respuesta", L"Tapez une réponse", L"Antwort eingeben", L"Scrivi una risposta", L"输入回复"},
     {L"Enviar", L"Send", L"Enviar", L"Envoyer", L"Senden", L"Invia", L"发送"},
     {L"Resposta enviada", L"Reply sent", L"Respuesta enviada", L"Réponse envoyée", L"Antwort gesendet", L"Risposta inviata", L"回复已发送"},
