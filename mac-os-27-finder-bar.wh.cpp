@@ -76,7 +76,7 @@ Small glass pills drop from the bar for headphones, audio output, low battery, c
 Turn on **Windows notifications** in logo → **Menu Bar Settings…** → **Notice pills** (off by default) and the bar shows your apps' notifications:
 
 - in the pill and in the bell panel, grouped by app; with liquid glass on, each notification is its own glass card in the Control Center's style
-- the sender's photo when the app sends one with the notification (WhatsApp, Discord, Teams...), with the app's icon in the corner; otherwise the app's icon
+- a round picture on each notification: the sender's photo when the app saves it on the PC with the notification (with the app's icon in the corner), otherwise the app's icon. Photos sent as web links (WhatsApp does this) aren't downloaded
 - **reply** to messages (like WhatsApp) right from the pill or from the Reply button in the panel, when the app supports replies
 - **drag** a notification aside in the panel to clear it
 - **Only the bar shows notifications**: optional; Windows' own banners move off the screen while the bar shows them, and come back when the option or the mod is turned off
@@ -18211,69 +18211,6 @@ static std::wstring ToastImagePath(const std::wstring& aumid, std::wstring src) 
     return L"";
 }
 
-// Foto que vem como endereço da internet (WhatsApp, por exemplo): o próprio
-// Windows a baixa para mostrar a notificação e guarda uma cópia em
-// %LOCALAPPDATA%\\Microsoft\\Windows\\Notifications\\wpnidm. Não há registro
-// documentado de qual arquivo é de qual endereço, então vale o horário: o
-// arquivo gravado logo antes desta notificação aparecer (experimental). Nada
-// é baixado pelo mod.
-static std::wstring WpnidmGuess(ULONGLONG arrivedFt) {
-    wchar_t local[MAX_PATH];
-    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) return L"";
-    std::wstring dir = std::wstring(local) + L"\\Microsoft\\Windows\\Notifications\\wpnidm\\";
-    std::wstring best;
-    ULONGLONG bestFt = 0;
-    WIN32_FIND_DATAW fd;
-    HANDLE h = FindFirstFileW((dir + L"*").c_str(), &fd);
-    if (h == INVALID_HANDLE_VALUE) {
-        Wh_Log(L"Notification image: no wpnidm folder (error %u)", GetLastError());
-        return L"";
-    }
-    int seen = 0;
-    do {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        seen++;
-        ULONGLONG ft = ((ULONGLONG)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime;
-        ULONGLONG ct = ((ULONGLONG)fd.ftCreationTime.dwHighDateTime << 32) | fd.ftCreationTime.dwLowDateTime;
-        ft = std::max(ft, ct);
-        // Gravado entre 20 s antes e 3 s depois da chegada (unidades de 100 ns).
-        if (ft + 200000000ULL < arrivedFt || ft > arrivedFt + 30000000ULL) continue;
-        LONGLONG ageMs = ((LONGLONG)arrivedFt - (LONGLONG)ft) / 10000;
-        Wh_Log(L"Notification image: wpnidm candidate %s, %lld ms before, %u bytes", fd.cFileName, ageMs, fd.nFileSizeLow);
-        if (ft > bestFt) {
-            bestFt = ft;
-            best = dir + fd.cFileName;
-        }
-    } while (FindNextFileW(h, &fd));
-    FindClose(h);
-    if (best.empty()) Wh_Log(L"Notification image: no recent file among %d in wpnidm", seen);
-    // Para descobrir um jeito exato depois: o que a chave do Windows guarda.
-    static bool dumped = false;
-    HKEY key;
-    if (!dumped && RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\\wpnidm", 0,
-                                 KEY_READ, &key) == ERROR_SUCCESS) {
-        dumped = true;
-        wchar_t name[256];
-        for (DWORD i = 0; i < 12; i++) {
-            DWORD nl = ARRAYSIZE(name), type = 0;
-            BYTE data[512];
-            DWORD dl = sizeof(data);
-            LONG r = RegEnumValueW(key, i, name, &nl, nullptr, &type, data, &dl);
-            if (r == ERROR_NO_MORE_ITEMS) break;
-            if (r != ERROR_SUCCESS) continue;
-            Wh_Log(L"wpnidm value %u: %s (type %u, %u bytes)%s%s", i, name, type, dl, type == REG_SZ ? L" = " : L"",
-                   type == REG_SZ ? (PCWSTR)data : L"");
-        }
-        for (DWORD i = 0; i < 12; i++) {
-            DWORD nl = ARRAYSIZE(name);
-            if (RegEnumKeyExW(key, i, name, &nl, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
-            Wh_Log(L"wpnidm subkey %u: %s", i, name);
-        }
-        RegCloseKey(key);
-    }
-    return best;
-}
-
 // Monta o que dá para fazer com a notificação (na thread das notificações).
 [[maybe_unused]] static void NotifReadReply(NotifMsg* m) {
     if (m->aumid.empty()) return;
@@ -18286,42 +18223,29 @@ static std::wstring WpnidmGuess(ULONGLONG arrivedFt) {
     // Qual imagem: a que substitui o ícone; senão, a primeira recortada em círculo.
     std::vector<std::wstring> images = XmlTags(xml, L"image");
     const std::wstring* pick = nullptr;
-    for (const std::wstring& img : images) {
-        // No log do Windhawk, para ver como cada app manda a foto.
-        Wh_Log(L"Notification image (%s): placement=%s hint-crop=%s src=%s", m->aumid.c_str(),
-               XmlAttr(img, L"placement").c_str(), XmlAttr(img, L"hint-crop").c_str(), XmlAttr(img, L"src").c_str());
+    // Fotos que vêm como endereço da internet (o WhatsApp manda assim) não são
+    // baixadas: o cartão mostra o ícone do app.
+    for (const std::wstring& img : images)
         if (!pick && _wcsicmp(XmlAttr(img, L"placement").c_str(), L"appLogoOverride") == 0) pick = &img;
-    }
     if (!pick)
         for (const std::wstring& img : images)
             if (_wcsicmp(XmlAttr(img, L"hint-crop").c_str(), L"circle") == 0) {
                 pick = &img;
                 break;
             }
-    if (images.empty()) Wh_Log(L"Notification image (%s): none in the notification", m->aumid.c_str());
     if (pick) {
         std::wstring src = XmlAttr(*pick, L"src");
         std::wstring path = ToastImagePath(m->aumid, src);
-        if (path.empty() && (_wcsnicmp(src.c_str(), L"https://", 8) == 0 || _wcsnicmp(src.c_str(), L"http://", 7) == 0)) {
-            FILETIME now;
-            GetSystemTimeAsFileTime(&now);
-            path = WpnidmGuess(((ULONGLONG)now.dwHighDateTime << 32) | now.dwLowDateTime);
-        }
         HANDLE f = path.empty() ? INVALID_HANDLE_VALUE
                                 : CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                               nullptr, OPEN_EXISTING, 0, nullptr);
-        if (path.empty()) {
-            Wh_Log(L"Notification image: no local file for %s", src.c_str());
-        } else if (f == INVALID_HANDLE_VALUE) {
-            Wh_Log(L"Notification image: can't open %s (error %u)", path.c_str(), GetLastError());
-        } else {
+        if (f != INVALID_HANDLE_VALUE) {
             LARGE_INTEGER size{};
             if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
                 auto data = std::make_shared<std::string>((size_t)size.QuadPart, '\0');
                 DWORD got = 0;
                 if (ReadFile(f, &(*data)[0], (DWORD)data->size(), &got, nullptr) && got == data->size()) m->avatar = data;
             }
-            Wh_Log(L"Notification image: %s, %lld bytes, %s", path.c_str(), (long long)size.QuadPart, m->avatar ? L"read" : L"not read");
             CloseHandle(f);
         }
     }
@@ -18989,6 +18913,21 @@ static ID2D1Bitmap* NtfAvatar(const IslandNote& n) {
     return bmp;
 }
 
+// Desenha uma imagem recortada em círculo (foto ou ícone do app), preenchendo-o.
+// zoom > 1 amplia um pouco, para a borda transparente do ícone não aparecer.
+static void NtfDrawRound(ID2D1RenderTarget* rt, ID2D1Bitmap* bmp, D2D1_POINT_2F c, float radius, float zoom = 1.0f) {
+    ID2D1BitmapBrush* bb = nullptr;
+    if (FAILED(rt->CreateBitmapBrush(bmp, &bb))) return;
+    D2D1_SIZE_F ps = bmp->GetSize();
+    float d = 2 * radius * zoom;
+    float k = d / std::max(1.0f, std::min(ps.width, ps.height));
+    bb->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    bb->SetTransform(D2D1::Matrix3x2F::Scale(k, k) *
+                     D2D1::Matrix3x2F::Translation(c.x - ps.width * k / 2, c.y - ps.height * k / 2));
+    rt->FillEllipse(D2D1::Ellipse(c, radius, radius), bb);
+    bb->Release();
+}
+
 // Dá para responder pela notificação (campo de texto e o ativador do app).
 static bool NtfCanReply(const IslandNote& n) { return n.reply.canReply && n.reply.hasActivator; }
 
@@ -19331,7 +19270,8 @@ static void NtfRender() {
                     // Linha de cima: ícone e nome do app; a hora (e a seta do grupo) à direita.
                     float is = 16 * s;
                     D2D1_RECT_F ir = D2D1::RectF(r.left + 14 * s, y + 1 * s, r.left + 14 * s + is, y + 1 * s + is);
-                    if (ID2D1Bitmap* ic = NtfIcon(g.aumid)) rt->DrawBitmap(ic, ir, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    if (ID2D1Bitmap* ic = NtfIcon(g.aumid))
+                        NtfDrawRound(rt, ic, D2D1::Point2F((ir.left + ir.right) / 2, (ir.top + ir.bottom) / 2), is / 2, 1.12f);
                     wchar_t when[16];
                     swprintf(when, 16, L"%02d:%02d", h.at.wHour, h.at.wMinute);
                     float whenW = GmMeasure(g_ntf.fSmall, when);
@@ -19362,27 +19302,17 @@ static void NtfRender() {
                 ID2D1Bitmap* photo = NtfAvatar(h.note);
                 ID2D1Bitmap* appIcon = NtfIcon(h.note.aumid.empty() ? g.aumid : h.note.aumid);
                 if (photo) {
-                    ID2D1BitmapBrush* bb = nullptr;
-                    if (SUCCEEDED(rt->CreateBitmapBrush(photo, &bb))) {
-                        D2D1_SIZE_F ps = photo->GetSize();
-                        float k2 = av / std::max(1.0f, std::min(ps.width, ps.height));  // preenche o círculo
-                        bb->SetInterpolationMode(D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-                        bb->SetTransform(D2D1::Matrix3x2F::Scale(k2, k2) *
-                                         D2D1::Matrix3x2F::Translation(ax - (ps.width * k2 - av) / 2, ay - (ps.height * k2 - av) / 2));
-                        rt->FillEllipse(el, bb);
-                        bb->Release();
-                    }
+                    NtfDrawRound(rt, photo, el.point, av / 2);
                     if (appIcon) {
-                        float bs = 20 * s, bx = ax + av - bs + 3 * s, byy = ay + av - bs + 3 * s;
+                        float bs = 20 * s;
+                        D2D1_POINT_2F bc = D2D1::Point2F(ax + av - bs / 2 + 3 * s, ay + av - bs / 2 + 3 * s);
                         br->SetColor(g_light ? D2D1::ColorF(1, 1, 1, 0.95f) : D2D1::ColorF(0.10f, 0.10f, 0.11f, 0.95f));
-                        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(bx + bs / 2, byy + bs / 2), bs / 2 + 1.5f * s, bs / 2 + 1.5f * s), br);
-                        rt->DrawBitmap(appIcon, D2D1::RectF(bx + 2 * s, byy + 2 * s, bx + bs - 2 * s, byy + bs - 2 * s), 1.0f,
-                                       D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                        rt->FillEllipse(D2D1::Ellipse(bc, bs / 2 + 1.5f * s, bs / 2 + 1.5f * s), br);
+                        NtfDrawRound(rt, appIcon, bc, bs / 2, 1.12f);
                     }
                 } else if (appIcon) {
-                    float pad = 4 * s;
-                    rt->DrawBitmap(appIcon, D2D1::RectF(ax + pad, ay + pad, ax + av - pad, ay + av - pad), 1.0f,
-                                   D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+                    // O ícone do app, redondo como uma foto de contato.
+                    NtfDrawRound(rt, appIcon, el.point, av / 2, 1.12f);
                 } else {
                     DWORD c = g.color;
                     br->SetColor(D2D1::ColorF(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f, 0.9f));
