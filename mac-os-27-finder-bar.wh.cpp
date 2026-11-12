@@ -185,11 +185,11 @@ The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so
   $name: Animation when opening the Control Center, menus and tray
   $name:pt-BR: Animação ao abrir a central, os menus e a bandeja
   $options:
-  - cascade: Cascade (tiles appear row by row, growing)
+  - cascade: Cascade (in the Control Center, each row slides out from under the one above)
   - fade: Fade only
   - none: None
   $options:pt-BR:
-  - cascade: Cascata (blocos aparecem linha a linha, crescendo)
+  - cascade: Cascata (na Central, cada linha sai de dentro da linha de cima)
   - fade: Só esmaecer
   - none: Nenhuma
 - ccOnStyle: circle
@@ -267,6 +267,7 @@ The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <functional>
 #include <map>
 #include <set>
 #include <uiautomation.h>
@@ -6992,16 +6993,70 @@ static void CcRender() {
         closeAv.dy = -22 * s * e;
         closeAv.done = false;
     }
+    // Cascata de verdade: cada bloco sai de dentro do bloco de cima, linha por
+    // linha. Ele começa escondido atrás da borda de baixo do bloco acima (que
+    // também está descendo) e desliza para o lugar dele; a primeira linha sai
+    // do topo do painel.
+    std::map<int, float> cascDy, cascClip;
+    const bool cascade = g_cc.animating && !g_ccClosing && g_settings.openAnim == 2;
+    if (cascade) {
+        std::vector<int> ids(g_ccOrder.begin(), g_ccOrder.end());
+        if (!g_cc.edit) ids.push_back(CC_EDIT);
+        std::vector<float> tops;
+        for (int id : ids) tops.push_back(std::round(g_cc.rc[id].top));
+        std::sort(tops.begin(), tops.end());
+        tops.erase(std::unique(tops.begin(), tops.end()), tops.end());
+        float panelTop = g_cc.M;
+        // O bloco "pai": o que está logo acima, cruzando na horizontal.
+        std::map<int, int> parent;
+        for (int id : ids) {
+            const D2D1_RECT_F& r = g_cc.rc[id];
+            int best = -1;
+            for (int o : ids) {
+                const D2D1_RECT_F& q = g_cc.rc[o];
+                if (o == id || q.bottom > r.top + 1 || q.right <= r.left || q.left >= r.right) continue;
+                if (best < 0 || q.bottom > g_cc.rc[best].bottom) best = o;
+            }
+            parent[id] = best;
+        }
+        std::function<float(int)> dyOf = [&](int id) -> float {
+            auto f = cascDy.find(id);
+            if (f != cascDy.end()) return f->second;
+            const D2D1_RECT_F& r = g_cc.rc[id];
+            int row = (int)(std::lower_bound(tops.begin(), tops.end(), std::round(r.top)) - tops.begin());
+            float p = (float)std::clamp((t - row * 55.0) / 340.0, 0.0, 1.0);
+            if (p < 1) allDone = false;
+            float e = EaseOutBack(p);
+            int par = parent[id];
+            float base = par >= 0 ? g_cc.rc[par].bottom : panelTop;
+            float clip = base + (par >= 0 ? dyOf(par) : 0);
+            float h = r.bottom - r.top, gap = r.top - base;
+            float top = clip - h + (gap + h) * e;  // escondido logo acima da linha de corte -> no lugar
+            cascClip[id] = clip;
+            return cascDy[id] = top - r.top;
+        };
+        for (int id : ids) dyOf(id);
+    }
+
     for (int id : g_ccOrder) {
         const D2D1_RECT_F& ar = g_cc.rc[id];
         AnimV av = openAv;
-        if (!av.done) allDone = false;
+        if (cascade) {
+            av = AnimV();
+            av.dy = cascDy[id];
+            av.done = false;
+        }
+        if (!av.done && !cascade) allDone = false;
         D2D1_POINT_2F pivot = closePivot;
         if (g_ccClosing) {
             av = closeAv;
             pivot = closePivot;
         }
-        if (g_cc.animating || g_ccClosing) CcGlassAnimate(vi, ar, av, pivot);
+        if (g_cc.animating || g_ccClosing) {
+            AnimV gv = av;
+            if (cascade) gv.a = std::clamp((ar.bottom + av.dy - cascClip[id]) / std::max(1.0f, ar.bottom - ar.top), 0.0f, 1.0f);
+            CcGlassAnimate(vi, ar, gv, pivot);
+        }
         // Troca de forma/lugar em andamento: o bloco é desenhado onde está agora.
         D2D1_RECT_F disp = id == dragged ? ar : CcAnimRect(id);
         bool moving = !RectEq(disp, ar);
@@ -7044,6 +7099,9 @@ static void CcRender() {
             g_cc.rt->SetTransform(tileM);
         }
         bool anim = animLayer && !AnimIsIdentity(av);
+        bool clipped = cascade && std::fabs(av.dy) > 0.05f;
+        if (clipped)  // só aparece abaixo da borda do bloco de cima
+            g_cc.rt->PushAxisAlignedClip(D2D1::RectF(-10000, cascClip[id], 10000, 100000), D2D1_ANTIALIAS_MODE_ALIASED);
         if (anim) PushAnim(g_cc.rt, animLayer, av, pivot, tileM);
         CcDrawTile(id, sh);
         if (g_cc.edit) {
@@ -7052,19 +7110,32 @@ static void CcRender() {
             if (CcCanResize(id)) CcDrawResizeArc(id, ca);
         }
         if (anim) PopAnim(g_cc.rt, tileM);
+        if (clipped) g_cc.rt->PopAxisAlignedClip();
     }
 
     if (!g_cc.edit) {
         const D2D1_RECT_F& er = g_cc.rc[CC_EDIT];
         AnimV av = openAv;
-        if (!av.done) allDone = false;
+        if (cascade) {
+            av = AnimV();
+            av.dy = cascDy[CC_EDIT];
+            av.done = false;
+        }
+        if (!av.done && !cascade) allDone = false;
         D2D1_POINT_2F pivot = closePivot;
         if (g_ccClosing) {
             av = closeAv;
             pivot = closePivot;
         }
-        if (g_cc.animating || g_ccClosing) CcGlassAnimate(vi, er, av, pivot);
+        if (g_cc.animating || g_ccClosing) {
+            AnimV gv = av;
+            if (cascade) gv.a = std::clamp((er.bottom + av.dy - cascClip[CC_EDIT]) / std::max(1.0f, er.bottom - er.top), 0.0f, 1.0f);
+            CcGlassAnimate(vi, er, gv, pivot);
+        }
         bool anim = animLayer && !AnimIsIdentity(av);
+        bool clipped = cascade && std::fabs(av.dy) > 0.05f;
+        if (clipped)
+            g_cc.rt->PushAxisAlignedClip(D2D1::RectF(-10000, cascClip[CC_EDIT], 10000, 100000), D2D1_ANTIALIAS_MODE_ALIASED);
         if (anim) PushAnim(g_cc.rt, animLayer, av, pivot);
         CcDrawPillButton(CC_EDIT, L"Editar controles", false);
         if (g_ccPowerBox.right > g_ccPowerBox.left) {
@@ -7101,6 +7172,7 @@ static void CcRender() {
             }
         }
         if (anim) PopAnim(g_cc.rt);
+        if (clipped) g_cc.rt->PopAxisAlignedClip();
     } else {
         if (!g_cc.addRects.empty()) {
             float top = g_cc.addRects.front().second.top - 22 * s;
@@ -19462,6 +19534,10 @@ static void OpenItemMenu(Bar* b, int idx) {
         SearchOpen();
         return;
     }
+    // O calendário e a previsão fecham antes de outro painel abrir: senão ainda
+    // estariam na tela quando o vidro líquido do painel novo tira a foto do fundo.
+    if (g_calw.hwnd && it.kind != K_CLOCK) CalClose();
+    if (g_wxw.hwnd && it.kind != K_WEATHER) WxClose();
     if (it.kind == K_NOTIF && !g_forceFullMenu) {
         if (g_tray.hwnd) CloseTrayPopup(false);
         if (g_fly.hwnd) FlyClose(false);
