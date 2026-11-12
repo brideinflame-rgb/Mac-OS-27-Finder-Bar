@@ -351,6 +351,7 @@ struct Settings {
     int menuTransp;       // transparência dos menus no estilo vidro
     int searchTarget;     // ícone de busca: 0 pesquisa do Windows, 1 Siri Plus Launchpad
     int openAnim;  // 0 nenhuma, 1 esmaecer, 2 cascata
+    int ccCloseAnim;  // ao fechar a Central: 0 cascata, 1 encolher, 2 esmaecer, 3 deslizar para cima, 4 nenhuma
     bool showOsd;
     bool flyouts;
     bool bgBlur;
@@ -531,6 +532,7 @@ static const UiDefault kUiDefaults[] = {
     {L"showVolume", L"1"},
     {L"showTray", L"1"},
     {L"ccDimScreen", L"0"},
+    {L"ccCloseAnim", L"cascade"},
     {L"showOsd", L"1"},
     {L"flyouts", L"1"},
     {L"showControlCenter", L"1"},
@@ -840,6 +842,10 @@ static void LoadSettings() {
         s.openAnim = a == L"none" ? 0 : a == L"fade" ? 1 : 2;
     }
     s.bgBlur = OvrInt(L"ccDimScreen") != 0;
+    {
+        std::wstring ca = OvrStr(L"ccCloseAnim");
+        s.ccCloseAnim = ca == L"shrink" ? 1 : ca == L"fade" ? 2 : ca == L"slide" ? 3 : ca == L"none" ? 4 : 0;
+    }
     s.showOsd = OvrInt(L"showOsd") != 0;
     s.flyouts = OvrInt(L"flyouts") != 0;
     s.ccFullPill = ReadStr(L"ccOnStyle") == L"pill";
@@ -6869,9 +6875,20 @@ static void CcDrawPillButton(int id, const std::wstring& src, bool strong) {
 static bool g_ccClosing = false, g_ccCloseRefocus = false;
 static float g_ccPivotX = -1;  // x do botão da central (no painel): de onde ela desce
 static ULONGLONG g_ccCloseTick = 0;
-static const double kCcCloseMs = 240;
+static double g_ccCloseMs = 240;  // duração do fechamento escolhido
 static float CcCloseProgress() {
-    return g_ccClosing ? (float)std::min(1.0, (GetTickCount64() - g_ccCloseTick) / kCcCloseMs) : 0.0f;
+    return g_ccClosing ? (float)std::min(1.0, (GetTickCount64() - g_ccCloseTick) / g_ccCloseMs) : 0.0f;
+}
+// Tempos da cascata (abrir e fechar): espaço entre as linhas e o movimento de cada bloco.
+static const double kCascOpenStep = 55, kCascOpenMs = 340, kCascCloseStep = 40, kCascCloseMs = 240;
+// Quantas linhas de blocos a Central tem agora (a cascata de fechar dura conforme).
+static int CcRowCount() {
+    std::vector<float> tops;
+    for (int id : g_ccOrder) tops.push_back(std::round(g_cc.rc[id].top));
+    if (!g_cc.edit) tops.push_back(std::round(g_cc.rc[CC_EDIT].top));
+    std::sort(tops.begin(), tops.end());
+    tops.erase(std::unique(tops.begin(), tops.end()), tops.end());
+    return std::max(1, (int)tops.size());
 }
 static D2D1_RECT_F g_ccFrom[CC_TILE_COUNT];
 static ULONGLONG g_ccMoveTick = 0;
@@ -6992,17 +7009,28 @@ static void CcRender() {
     AnimV openAv = AnimAt(t, 0, 380.0, 0.5f, -22 * s);
     if (g_ccClosing) {
         float e = closeP * closeP;
-        closeAv.a = 1 - e;
-        closeAv.sc = 1 - 0.5f * e;
-        closeAv.dy = -22 * s * e;
         closeAv.done = false;
+        switch (g_settings.ccCloseAnim) {
+            case 2:  // esmaecer
+                closeAv.a = 1 - closeP;
+                break;
+            case 3:  // deslizar para cima
+                closeAv.a = 1 - e;
+                closeAv.dy = -48 * s * e;
+                break;
+            default:  // encolher de volta para o botão
+                closeAv.a = 1 - e;
+                closeAv.sc = 1 - 0.5f * e;
+                closeAv.dy = -22 * s * e;
+        }
     }
     // Cascata de verdade: cada bloco sai de dentro do bloco de cima, linha por
     // linha. Ele começa escondido atrás da borda de baixo do bloco acima (que
     // também está descendo) e desliza para o lugar dele; a primeira linha sai
     // do topo do painel.
     std::map<int, float> cascDy, cascClip;
-    const bool cascade = g_cc.animating && !g_ccClosing && g_settings.openAnim == 2;
+    const bool cascadeClose = g_ccClosing && g_settings.ccCloseAnim == 0;
+    const bool cascade = (g_cc.animating && !g_ccClosing && g_settings.openAnim == 2) || cascadeClose;
     if (cascade) {
         std::vector<int> ids(g_ccOrder.begin(), g_ccOrder.end());
         if (!g_cc.edit) ids.push_back(CC_EDIT);
@@ -7028,9 +7056,18 @@ static void CcRender() {
             if (f != cascDy.end()) return f->second;
             const D2D1_RECT_F& r = g_cc.rc[id];
             int row = (int)(std::lower_bound(tops.begin(), tops.end(), std::round(r.top)) - tops.begin());
-            float p = (float)std::clamp((t - row * 55.0) / 340.0, 0.0, 1.0);
-            if (p < 1) allDone = false;
-            float e = EaseOutBack(p);
+            float e;
+            if (cascadeClose) {
+                // Ao fechar: de baixo para cima, cada bloco volta para dentro do de cima.
+                double tc = (double)(GetTickCount64() - g_ccCloseTick);
+                int back = (int)tops.size() - 1 - row;
+                float p = (float)std::clamp((tc - back * kCascCloseStep) / kCascCloseMs, 0.0, 1.0);
+                e = 1 - p * p * p;
+            } else {
+                float p = (float)std::clamp((t - row * kCascOpenStep) / kCascOpenMs, 0.0, 1.0);
+                if (p < 1) allDone = false;
+                e = EaseOutBack(p);
+            }
             int par = parent[id];
             float base = par >= 0 ? g_cc.rc[par].bottom : panelTop;
             float clip = base + (par >= 0 ? dyOf(par) : 0);
@@ -7052,7 +7089,7 @@ static void CcRender() {
         }
         if (!av.done && !cascade) allDone = false;
         D2D1_POINT_2F pivot = closePivot;
-        if (g_ccClosing) {
+        if (g_ccClosing && !cascade) {
             av = closeAv;
             pivot = closePivot;
         }
@@ -7127,7 +7164,7 @@ static void CcRender() {
         }
         if (!av.done && !cascade) allDone = false;
         D2D1_POINT_2F pivot = closePivot;
-        if (g_ccClosing) {
+        if (g_ccClosing && !cascade) {
             av = closeAv;
             pivot = closePivot;
         }
@@ -7284,7 +7321,7 @@ static void CcRefreshLocal() {
 // cima à direita e some), em vez de sumir de uma vez.
 static void CloseControlCenter(bool refocus) {
     if (!g_cc.hwnd) return;
-    if (g_settings.openAnim == 0) {
+    if (g_settings.openAnim == 0 || g_settings.ccCloseAnim == 4) {
         g_captureNeedsFlush = true;
         DestroyWindow(g_cc.hwnd);  // WM_DESTROY limpa o resto
         if (refocus) FocusActive();
@@ -7294,6 +7331,8 @@ static void CloseControlCenter(bool refocus) {
     if (g_ccClosing) return;
     g_ccClosing = true;
     g_ccCloseTick = GetTickCount64();
+    g_ccCloseMs = g_settings.ccCloseAnim == 0 ? (CcRowCount() - 1) * kCascCloseStep + kCascCloseMs
+                : g_settings.ccCloseAnim == 2 ? 200 : g_settings.ccCloseAnim == 3 ? 260 : 240;
     HideFromCapture(g_cc.hwnd);
     HideFromCapture(g_cc.glass);
     g_cc.animating = false;
@@ -7552,7 +7591,8 @@ static LRESULT CALLBACK CcWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == 6) {  // fechando: volta para o ícone
                 float p = CcCloseProgress();
                 if (g_cc.backdrop) BackdropOpacity(g_cc.backdrop, 1 - p);
-                CcSetGlassOpacity(1 - p * p);
+                // Na cascata cada pedaço de vidro some com o seu bloco.
+                CcSetGlassOpacity(g_settings.ccCloseAnim == 0 ? 1.0f : 1 - p * p);
                 if (p >= 1) {
                     KillTimer(hwnd, 6);
                     bool refocus = g_ccCloseRefocus;
@@ -11374,7 +11414,7 @@ enum BsVal {
     BV_BATTPCT, BV_AUTOHIDE, BV_HIDEFS, BV_SOLIDMAX, BV_ALLMON, BV_FLYOUTS, BV_OSD, BV_DIM,
     BV_G_TRANSP, BV_G_CLEAR, BV_G_LIQUID, BV_G_REFRACT, BV_G_BLUR, BV_G_LIVE, BV_WEATHER, BV_BARSTYLE, BV_HEIGHT, BV_FONT, BV_ICONS, BV_BSSTYLE, BV_BSTRANSP, BV_SELBAR, BV_SELMENU, BV_MENUGLASS, BV_MENUTRANSP, BV_UPDATES,
     BV_G_TINT, BV_SEARCHTGT, BV_LANG, BV_NPBAR, BV_ICSADD, BV_ICSCLEAR,
-    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH,
+    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE,
 };
 
 struct BsRowDef {
@@ -11433,6 +11473,7 @@ static const BsRowDef kBsRows[] = {
     {BR_SWITCH, BV_FLYOUTS, L"Pílulas de vidro (volume, brilho, Bluetooth)", 0, 0},
     {BR_SWITCH, BV_OSD, L"Indicador de volume e brilho", 0, 0, L"Logo abaixo do ícone na barra"},
     {BR_SWITCH, BV_DIM, L"Escurecer a tela com a Central de Controle", 0, 0},
+    {BR_CHOICE, BV_CCCLOSE, L"Ao fechar a Central", 0, 0, L"Cascata: cada linha volta para dentro da linha de cima, de baixo para cima"},
     {BR_HEADER, BV_NONE, L"Vidro dos painéis", 0xE790, 0x5AC8FA, L"Do transparente ao tingido: o vidro dos menus, da Central e dos painéis"},
     {BR_CHOICE, BV_G_STYLE, L"Estilo do vidro", 0, 0, L"Vidro líquido personalizado: a sua cor no topo, sumindo em vidro limpo embaixo"},
     {BR_SLIDER, BV_G_TINT, L"Transparente ↔ tingido", 0, 0, L"À esquerda o vidro limpo; à direita, mais cor"},
@@ -11586,6 +11627,7 @@ static int BsGet(int val) {
         case BV_G_LIVE: return g_glass.live;
         case BV_BARSTYLE: return g_settings.barStyle;
         case BV_G_STYLE: return g_glass.tinted ? 1 : 0;
+        case BV_CCCLOSE: return g_settings.ccCloseAnim;
         case BV_TCOLOR: return TintPaletteIndex();
         case BV_TLEVEL: return g_settings.tintLevel;
         case BV_TREACH: return g_settings.tintReach;
@@ -11772,6 +11814,12 @@ static void BsSet(int val, int v) {
         OvrSetStr(L"barStyle", kNames[v]);
         BarsRestyle();  // troca o fundo na barra que já existe
         TintApply();    // a cor do texto da barra segue a cor do vidro
+        return;
+    }
+    if (val == BV_CCCLOSE) {
+        static const PCWSTR kNames[] = {L"cascade", L"shrink", L"fade", L"slide", L"none"};
+        g_settings.ccCloseAnim = std::clamp(v, 0, 4);
+        OvrSetStr(L"ccCloseAnim", kNames[g_settings.ccCloseAnim]);
         return;
     }
     if (val == BV_G_STYLE) {
@@ -12068,6 +12116,7 @@ static void BsReleaseFormats() {
 static const PCWSTR kBsChoices[] = {L"Vidro", L"Transparente", L"Líquido"};
 static const PCWSTR kBsBarChoices[] = {L"Vidro", L"Transparente", L"Líquido", L"Vidro líquido personalizado"};
 static const PCWSTR kBsGlassStyle[] = {L"Transparente", L"Vidro líquido personalizado"};
+static const PCWSTR kBsCcClose[] = {L"Cascata", L"Encolher", L"Esmaecer", L"Deslizar para cima", L"Nenhuma"};
 static const PCWSTR kBsLookChoices[] = {L"Desfoque", L"Líquido", L"Transparente"};
 static const PCWSTR kBsMenuChoices[] = {L"Vidro", L"Igual à Central"};
 static const PCWSTR kBsIslStyle[] = {L"Vidro", L"Líquido", L"Escuro"};
@@ -12101,6 +12150,7 @@ static const PCWSTR* BsChoiceLabels(int val) {
         case BV_LANG: return kBsLang;
         case BV_BARSTYLE: return kBsBarChoices;
         case BV_G_STYLE: return kBsGlassStyle;
+        case BV_CCCLOSE: return kBsCcClose;
     }
     return kBsChoices;
 }
@@ -12110,7 +12160,7 @@ static int BsChoiceCount(int val) {
         case BV_BARSTYLE: return 4;
         case BV_LANG: return (int)ARRAYSIZE(kBsLang);
         case BV_ISLIN: return 4;
-        case BV_ISLOUT: return 5;
+        case BV_ISLOUT: case BV_CCCLOSE: return 5;
     }
     return 3;
 }
@@ -22582,6 +22632,11 @@ const UiTr kUiTr[] = {
     {L"Descer", L"Drop", L"Bajar", L"Descendre", L"Herabfallen", L"Scendi", L"下落"},
     {L"Esmaecer", L"Fade", L"Atenuar", L"Fondu", L"Verblassen", L"Dissolvenza", L"淡化"},
     {L"Encolher", L"Shrink", L"Encoger", L"Rétrécir", L"Schrumpfen", L"Riduci", L"收缩"},
+    {L"Cascata", L"Cascade", L"Cascada", L"Cascade", L"Kaskade", L"Cascata", L"层叠"},
+    {L"Deslizar para cima", L"Slide up", L"Deslizar hacia arriba", L"Glisser vers le haut", L"Nach oben gleiten", L"Scorri verso l’alto", L"向上滑动"},
+    {L"Nenhuma", L"None", L"Ninguna", L"Aucune", L"Keine", L"Nessuna", L"无"},
+    {L"Ao fechar a Central", L"When the Control Center closes", L"Al cerrar el Centro de control", L"À la fermeture du Centre de contrôle", L"Beim Schließen des Kontrollzentrums", L"Alla chiusura del Centro di Controllo", L"控制中心关闭时"},
+    {L"Cascata: cada linha volta para dentro da linha de cima, de baixo para cima", L"Cascade: each row slides back into the one above, from the bottom up", L"Cascada: cada fila vuelve a entrar en la de arriba, de abajo hacia arriba", L"Cascade : chaque ligne rentre dans celle du dessus, de bas en haut", L"Kaskade: Jede Reihe gleitet von unten nach oben in die darüber zurück", L"Cascata: ogni riga rientra in quella sopra, dal basso verso l’alto", L"层叠：每一行从下往上收回到上一行里"},
     {L"Sugar", L"Suck in", L"Absorber", L"Aspirer", L"Einsaugen", L"Risucchio", L"吸入"},
     {L"Subir", L"Rise", L"Subir", L"Monter", L"Aufsteigen", L"Sali", L"上升"},
     {L"Centro", L"Center", L"Centro", L"Centre", L"Mitte", L"Centro", L"居中"},
