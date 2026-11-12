@@ -31,6 +31,7 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Calendar**: click the clock for the calendar and your agenda from your own .ics files (read locally, never downloaded), imported right from the settings
 - **Weather**: the temperature on the bar and a glass widget with the forecast (Open-Meteo, MET Norway or wttr.in, no account needed)
 - **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
+- **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
 - **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; menus in their own frosted glass or the same glass as the Control Center; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
 - **Settings window**: logo → **Menu Bar Settings…** opens the settings in a macOS-style window, with search, applied live without restarting the bar
 - **Your language**: follows the Windows display language, or pick one (English, Portuguese, Spanish, French, German, Italian and Simplified Chinese)

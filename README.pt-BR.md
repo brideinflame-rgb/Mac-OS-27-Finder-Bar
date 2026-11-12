@@ -31,6 +31,7 @@ Um mod do [Windhawk](https://windhawk.net) que coloca uma barra de menus no esti
 - **Calendário**: clique no relógio para ver o calendário e a sua agenda, de arquivos .ics seus (lidos no PC, nunca baixados), importados direto pelos ajustes
 - **Previsão do tempo**: a temperatura na barra e um widget de vidro com a previsão (Open-Meteo, MET Norway ou wttr.in, sem precisar de conta)
 - **Vidro ao vivo**: a barra e os painéis desfocam o que está atrás deles em tempo real, com um vidro líquido experimental com refração nas bordas (ligado por padrão)
+- **Vidro líquido personalizado** (o tema do Siri Plus Launchpad): a sua cor no topo, sumindo em vidro limpo embaixo, com uma linha fina de luz na borda de baixo. Vale para os painéis, para o fundo da barra ou para os dois; a cor, a força e até onde a cor desce ficam em Ajustes da Barra de Menus
 - **Barra e menus**: barra transparente (padrão), de vidro desfocado ou de vidro líquido, opaca com o app maximizado; menus com vidro fosco próprio ou o mesmo vidro da Central; tema claro, escuro ou automático, nove cores de seleção, fonte e tamanhos; some com apps em tela cheia, ocultar automaticamente opcional, todos os monitores
 - **Janela de ajustes**: logo → **Ajustes da Barra de Menus…** abre os ajustes numa janela no estilo do macOS, com busca, aplicados na hora, sem reiniciar a barra
 - **O seu idioma**: segue o idioma do Windows, ou escolha um (inglês, português, espanhol, francês, alemão, italiano e chinês simplificado)

@@ -2,13 +2,13 @@
 // @id              mac-os-27-finder-bar
 // @name            Mac OS 27 Finder Bar
 // @description     A macOS 27-style menu bar for Windows 11: global app menus, system status, Control Center, clock and live glass
-// @version         1.0.0
+// @version         1.1.0
 // @author          Thiago Silva
 // @github          https://github.com/brideinflame-rgb
 // @homepage        https://github.com/brideinflame-rgb/Mac-OS-27-Finder-Bar
 // @include         windhawk.exe
 // @include         explorer.exe
-// @compilerOptions -ldwmapi -ld2d1 -ldwrite -lversion -lshcore -lshell32 -luser32 -lgdi32 -lole32 -loleaut32 -luuid -lwlanapi -lbthprops -lpowrprof -ladvapi32 -lwindowscodecs -lwbemuuid -ldxva2 -lruntimeobject -lwinhttp -lcfgmgr32
+// @compilerOptions -ldwmapi -ld2d1 -ldwrite -lversion -lshcore -lshell32 -luser32 -lgdi32 -lole32 -loleaut32 -luuid -lwlanapi -lbthprops -lpowrprof -ladvapi32 -lwindowscodecs -lwbemuuid -ldxva2 -lruntimeobject -lwinhttp -lcfgmgr32 -lcomdlg32
 // @license         GPL-3.0
 // ==/WindhawkMod==
 
@@ -82,8 +82,9 @@ Turn on **Windows notifications** in logo → **Menu Bar Settings…** → **Not
 
 ## Bar and glass
 
-- Bar background: fully transparent (default), Windows blur glass, or liquid glass (experimental); opaque when the active app is maximized (optional)
+- Bar background: fully transparent (default), Windows blur glass, liquid glass (experimental) or custom liquid glass; opaque when the active app is maximized (optional)
 - **Live glass**: panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
+- **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
 - Menus use their own frosted glass (with a transparency slider) or **the same glass as the Control Center**
 - Light, dark or automatic theme, nine selection colors for the bar and menus, font, font size, icon size and bar height
 - Hides with full-screen apps, can hide automatically until the mouse touches the top, and shows on every monitor (each optional)
@@ -337,7 +338,9 @@ struct Settings {
     int islStyle, islSize, islDur, islIn, islOut, islPos;  // pílulas de aviso
     int npLayout, npSize;  // painel Tocando agora
     int npBar;             // barra de progresso: 0 linha, 1 colorida, 2 onda
-    int barStyle;  // 0 vidro, 1 transparente, 2 vidro líquido
+    int barStyle;  // 0 vidro, 1 transparente, 2 vidro líquido, 3 vidro líquido personalizado
+    DWORD tintColor;          // Vidro líquido personalizado: a cor (0xRRGGBB)
+    int tintLevel, tintReach;  // força da cor no topo e até onde ela desce (%)
     int selBar, selMenu;  // cor da seleção: índice em kSelPalette, -1 = fosca
     int menuGlass;        // 0 vidro fosco próprio, 1 igual à Central
     int menuTransp;       // transparência dos menus no estilo vidro
@@ -402,6 +405,7 @@ struct GlassPrefs {
     int refraction = 60;    // refração nas bordas (%)
     int blur = 30;          // desfoque do fundo no vidro líquido (%)
     bool live = false;      // vidro líquido acompanha o fundo ao vivo
+    bool tinted = false;    // Vidro líquido personalizado: a cor no topo, vidro limpo embaixo
 };
 static GlassPrefs g_glass;
 // Distância extra entre a barra e os painéis com vidro líquido (as bordas
@@ -416,14 +420,15 @@ static void (*g_wxGlassChanged)() = nullptr;  // redesenha o widget aberto
 static void LoadGlassPrefs() {
     wchar_t buf[128] = {};
     Wh_GetStringValue(L"glass", buf, ARRAYSIZE(buf));
-    int t, c, l, r, b, v;
-    if (swscanf(buf, L"%d;%d;%d;%d;%d;%d", &t, &c, &l, &r, &b, &v) == 6) {
+    int t, c, l, r, b, v, k = 0;
+    if (swscanf(buf, L"%d;%d;%d;%d;%d;%d;%d", &t, &c, &l, &r, &b, &v, &k) >= 6) {
         g_glass.transparency = std::clamp(t, 0, 100);
         g_glass.clear = c != 0;
         g_glass.liquid = l != 0;
         g_glass.refraction = std::clamp(r, 0, 100);
         g_glass.blur = std::clamp(b, 0, 100);
         g_glass.live = v != 0;
+        g_glass.tinted = k != 0;
     }
 }
 
@@ -448,8 +453,8 @@ static void SaveLater(PCWSTR key, const std::wstring& v) {
 
 static void SaveGlassPrefs() {
     wchar_t buf[128];
-    swprintf(buf, ARRAYSIZE(buf), L"%d;%d;%d;%d;%d;%d", g_glass.transparency, g_glass.clear ? 1 : 0,
-             g_glass.liquid ? 1 : 0, g_glass.refraction, g_glass.blur, g_glass.live ? 1 : 0);
+    swprintf(buf, ARRAYSIZE(buf), L"%d;%d;%d;%d;%d;%d;%d", g_glass.transparency, g_glass.clear ? 1 : 0,
+             g_glass.liquid ? 1 : 0, g_glass.refraction, g_glass.blur, g_glass.live ? 1 : 0, g_glass.tinted ? 1 : 0);
     SaveLater(L"glass", buf);
 }
 
@@ -477,6 +482,7 @@ MenuGlassScope::MenuGlassScope(bool enable)
     g_glass.liquid = false;
     g_glass.live = false;
     g_glass.clear = false;
+    g_glass.tinted = false;
     g_glass.transparency = g_settings.menuTransp;
 }
 // Distância entre a barra e os menus (só afastam com o vidro líquido).
@@ -498,6 +504,9 @@ static const UiDefault kUiDefaults[] = {
     {L"fontSize", L"13"},
     {L"iconScale", L"100"},
     {L"barStyle", L"transparent"},
+    {L"tintColor", L"#050505"},
+    {L"tintLevel", L"100"},
+    {L"tintReach", L"29"},
     {L"selectionBar", L"blue"},
     {L"selectionMenu", L"blue"},
     {L"menuGlass", L"glass"},
@@ -804,7 +813,16 @@ static void LoadSettings() {
     if (s.islDur < 15 || s.islDur > 80) s.islDur = 26;
     {
         std::wstring bs = OvrStr(L"barStyle");
-        s.barStyle = bs == L"transparent" ? 1 : bs == L"liquid" ? 2 : 0;
+        s.barStyle = bs == L"transparent" ? 1 : bs == L"liquid" ? 2 : bs == L"tinted" ? 3 : 0;
+        std::wstring tc = OvrStr(L"tintColor");
+        s.tintColor = 0x050505;
+        if (tc.size() == 7 && tc[0] == L'#') {
+            wchar_t* end = nullptr;
+            unsigned long x = wcstoul(tc.c_str() + 1, &end, 16);
+            if (end && *end == 0) s.tintColor = (DWORD)x & 0xFFFFFF;
+        }
+        s.tintLevel = std::clamp(OvrInt(L"tintLevel"), 0, 100);
+        s.tintReach = std::clamp(OvrInt(L"tintReach"), 0, 100);
     }
     s.selBar = SelIndex(OvrStr(L"selectionBar"));
     s.selMenu = SelIndex(OvrStr(L"selectionMenu"));
@@ -1317,6 +1335,12 @@ static DWORD ReadPersonalizeDword(PCWSTR value, DWORD fallback) {
     return v;
 }
 
+static bool TintIsLight() {
+    DWORD c = g_settings.tintColor;
+    float r = ((c >> 16) & 255) / 255.0f, g = ((c >> 8) & 255) / 255.0f, b = (c & 255) / 255.0f;
+    return 0.2126f * r + 0.7152f * g + 0.0722f * b > 0.6f;
+}
+
 static void ResolveTheme() {
     PersonalizeForget();
     if (g_settings.theme == 1) g_light = false;
@@ -1325,6 +1349,9 @@ static void ResolveTheme() {
     if (g_settings.panelTheme == 1) g_panelLight = false;
     else if (g_settings.panelTheme == 2) g_panelLight = true;
     else g_panelLight = ReadPersonalizeDword(L"AppsUseLightTheme", 1) != 0;
+    // Vidro líquido personalizado: o texto segue a cor escolhida (escuro numa cor clara).
+    if (g_glass.tinted) g_panelLight = TintIsLight();
+    if (g_settings.barStyle == 3) g_light = TintIsLight();
 }
 
 struct ACCENT_POLICY { int AccentState; int AccentFlags; DWORD GradientColor; int AnimationId; };
@@ -5600,6 +5627,27 @@ static ID2D1LinearGradientBrush* MakeGradient(ID2D1RenderTarget* rt, D2D1_POINT_
     return lg;
 }
 
+// Vidro líquido personalizado (o mesmo do Siri Plus Launchpad): a cor é sólida
+// no topo e dá lugar ao vidro limpo mais embaixo, onde o fundo refratado aparece.
+// A troca é espalhada numa faixa larga e segue uma curva em S sem quinas, em
+// muitos degraus: a cor afina por igual, sem uma linha onde começa ou termina.
+// top/bottom: opacidade no topo e embaixo; reach: onde fica a troca (0..1).
+static ID2D1LinearGradientBrush* MakeTintBrush(ID2D1RenderTarget* rt, float y0, float y1, float top, float bottom,
+                                               float reach) {
+    const DWORD c = g_settings.tintColor;
+    const float cr = ((c >> 16) & 255) / 255.0f, cg = ((c >> 8) & 255) / 255.0f, cb = (c & 255) / 255.0f;
+    constexpr int kStops = 25;
+    const float soft = 0.48f;
+    D2D1_GRADIENT_STOP st[kStops];
+    for (int i = 0; i < kStops; i++) {
+        float t = i / (float)(kStops - 1);
+        float u = std::clamp((t - (reach - soft)) / (2 * soft), 0.0f, 1.0f);
+        float e = u * u * u * (u * (u * 6 - 15) + 10);  // smootherstep
+        st[i] = {t, D2D1::ColorF(cr, cg, cb, top + (bottom - top) * e)};
+    }
+    return MakeGradient(rt, D2D1::Point2F(0, y0), D2D1::Point2F(0, y1), st, kStops);
+}
+
 // ===========================================================================
 // Vidro líquido (experimental), o mesmo do Siri Plus Launchpad
 //
@@ -6034,6 +6082,49 @@ static void DrawLiquidGlass(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, con
 
     // 1b. Vidro líquido: o fundo refratado por baixo da tinta.
     if (g_lqCur && !solidWhite && LqDraw(rt, *g_lqCur, r, radius, s)) glassOk = true;
+
+    // Vidro líquido personalizado (Siri Plus Launchpad): a cor escolhida no
+    // topo, sumindo em vidro limpo; a luz se junta numa linha fina na borda de
+    // baixo, que sobe pelos cantos e some, e o topo fica só com uma borda fraca.
+    if (g_glass.tinted && !solidWhite) {
+        float top = g_settings.tintLevel / 100.0f;
+        // Transparente ↔ tingido: 100 % transparente = limpo embaixo; 80 % = um véu leve.
+        float bottom = std::min(top, (100 - g_glass.transparency) / 100.0f * 0.8f);
+        // Sem refração nem desfoque atrás, um fundo limpo deixaria o que está atrás nítido sob o texto.
+        if (!glassOk) bottom = std::max(bottom, std::min(top, 0.55f));
+        if (small) {
+            // Botões e blocos (Central): a cor por igual, mais leve, sobre o painel já tingido.
+            br->SetColor(D2D1::ColorF(((g_settings.tintColor >> 16) & 255) / 255.0f, ((g_settings.tintColor >> 8) & 255) / 255.0f,
+                                      (g_settings.tintColor & 255) / 255.0f, std::max(bottom, top * 0.35f) * tint));
+            rt->FillRoundedRectangle(rr, br);
+        } else if (auto* body = MakeTintBrush(rt, r.top, r.bottom, top * tint, bottom * tint, g_settings.tintReach / 100.0f)) {
+            rt->FillRoundedRectangle(rr, body);
+            body->Release();
+        }
+        if (hovered) {
+            br->SetColor(g_light ? D2D1::ColorF(0, 0, 0, 0.05f) : D2D1::ColorF(1, 1, 1, 0.07f));
+            rt->FillRoundedRectangle(rr, br);
+        }
+        // O halo suave da linha, por dentro da borda.
+        D2D1_GRADIENT_STOP glowLine[] = {{0.0f, D2D1::ColorF(1, 1, 1, 0.0f)}, {0.62f, D2D1::ColorF(1, 1, 1, 0.0f)},
+                                         {0.88f, D2D1::ColorF(1, 1, 1, 0.04f)}, {1.0f, D2D1::ColorF(1, 1, 1, 0.13f)}};
+        if (auto* glow = MakeGradient(rt, D2D1::Point2F(0, r.top), D2D1::Point2F(0, r.bottom), glowLine, 4)) {
+            float gw = 2.4f * s, gi = gw / 2 + 0.4f * s, gr = std::max(0.0f, radius - gi);
+            rt->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(r.left + gi, r.top + gi, r.right - gi, r.bottom - gi), gr, gr), glow, gw);
+            glow->Release();
+        }
+        // A linha fina: forte no centro da base, fraca no topo.
+        D2D1_GRADIENT_STOP line[] = {{0.0f, D2D1::ColorF(1, 1, 1, 0.16f)}, {0.12f, D2D1::ColorF(1, 1, 1, 0.05f)},
+                                     {0.55f, D2D1::ColorF(1, 1, 1, 0.05f)}, {0.80f, D2D1::ColorF(1, 1, 1, 0.14f)},
+                                     {0.93f, D2D1::ColorF(1, 1, 1, 0.36f)}, {1.0f, D2D1::ColorF(1, 1, 1, 0.62f)}};
+        if (auto* edge = MakeGradient(rt, D2D1::Point2F(0, r.top), D2D1::Point2F(0, r.bottom), line, 6)) {
+            float bw = std::max(0.75f, 0.75f * s), half = bw / 2, rad = std::max(0.0f, radius - half);
+            rt->DrawRoundedRectangle(
+                D2D1::RoundedRect(D2D1::RectF(r.left + half, r.top + half, r.right - half, r.bottom - half), rad, rad), edge, bw);
+            edge->Release();
+        }
+        return;
+    }
 
     // Estilo transparente (Siri Plus Launchpad): tinta neutra que a
     // transparência controla, brilho fino em cima e uma borda suave.
@@ -11159,6 +11250,7 @@ enum BsVal {
     BV_BATTPCT, BV_AUTOHIDE, BV_HIDEFS, BV_SOLIDMAX, BV_ALLMON, BV_FLYOUTS, BV_OSD, BV_DIM,
     BV_G_TRANSP, BV_G_CLEAR, BV_G_LIQUID, BV_G_REFRACT, BV_G_BLUR, BV_G_LIVE, BV_WEATHER, BV_BARSTYLE, BV_HEIGHT, BV_FONT, BV_ICONS, BV_BSSTYLE, BV_BSTRANSP, BV_SELBAR, BV_SELMENU, BV_MENUGLASS, BV_MENUTRANSP, BV_UPDATES,
     BV_G_TINT, BV_SEARCHTGT, BV_LANG, BV_NPBAR, BV_ICSADD, BV_ICSCLEAR,
+    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH,
 };
 
 struct BsRowDef {
@@ -11218,11 +11310,16 @@ static const BsRowDef kBsRows[] = {
     {BR_SWITCH, BV_OSD, L"Indicador de volume e brilho", 0, 0, L"Logo abaixo do ícone na barra"},
     {BR_SWITCH, BV_DIM, L"Escurecer a tela com a Central de Controle", 0, 0},
     {BR_HEADER, BV_NONE, L"Vidro dos painéis", 0xE790, 0x5AC8FA, L"Do transparente ao tingido: o vidro dos menus, da Central e dos painéis"},
+    {BR_CHOICE, BV_G_STYLE, L"Estilo do vidro", 0, 0, L"Vidro líquido personalizado: a sua cor no topo, sumindo em vidro limpo embaixo"},
     {BR_SLIDER, BV_G_TINT, L"Transparente ↔ tingido", 0, 0, L"À esquerda o vidro limpo; à direita, mais cor"},
     {BR_SWITCH, BV_G_LIQUID, L"Vidro líquido (experimental)", 0, 0, L"Refração nas bordas, como o Liquid Glass"},
     {BR_SLIDER, BV_G_REFRACT, L"Refração nas bordas", 0, 0},
     {BR_SLIDER, BV_G_BLUR, L"Desfoque do fundo", 0, 0},
     {BR_SWITCH, BV_G_LIVE, L"Acompanhar o fundo ao vivo", 0, 0, L"Vídeos e papéis de parede animados continuam aparecendo atrás do vidro"},
+    {BR_GROUP, BV_NONE, L"Vidro líquido personalizado", 0, 0},
+    {BR_COLORS, BV_TCOLOR, L"Cor do vidro", 0, 0, L"O primeiro círculo abre a paleta do Windows, para qualquer cor"},
+    {BR_SLIDER, BV_TLEVEL, L"Força da cor no topo", 0, 0, L"100 = sólida no topo; menos deixa o fundo aparecer também na parte colorida"},
+    {BR_SLIDER, BV_TREACH, L"Até onde a cor desce", 0, 0, L"Valores baixos mantêm a cor perto do topo; altos a trazem para baixo"},
     {BR_HEADER, BV_NONE, L"Pílulas de aviso", 0xEA8F, 0xFF375F, L"Avisos que descem da barra e o botão de Notificações"},
     {BR_SWITCH, BV_ISLAND, L"Mostrar avisos em pílula", 0, 0},
     {BR_ACTION, BV_ISLTEST, L"Testar a pílula agora", 0, 0},
@@ -11341,6 +11438,16 @@ static void BsAction(int val);
 // por um instante (GlassTranspScope): os sliders leem o valor real daqui.
 static const int* g_glassTranspSaved = nullptr;
 static int GlassTranspValue() { return g_glassTranspSaved ? *g_glassTranspSaved : g_glass.transparency; }
+// Cores prontas do Vidro líquido personalizado (o primeiro círculo é a paleta do Windows).
+static const DWORD kTintPalette[] = {0x050505, 0x2C2C2E, 0x0B1F3A, 0x2A1446, 0x3D0B14, 0x0F2A1D, 0x1E3A5F, 0xF2F2F7};
+static_assert(ARRAYSIZE(kTintPalette) == ARRAYSIZE(kSelPalette), "a fileira de cores tem o mesmo tamanho");
+static int TintPaletteIndex() {
+    for (int i = 0; i < (int)ARRAYSIZE(kTintPalette); i++)
+        if (kTintPalette[i] == g_settings.tintColor) return i;
+    return -1;  // uma cor da paleta do Windows
+}
+static void TintApply();
+
 static int BsGet(int val) {
     if (const BsBoolKey* k = BsKeyFor(val)) return g_settings.*(k->field) ? 1 : 0;
     switch (val) {
@@ -11354,6 +11461,10 @@ static int BsGet(int val) {
         case BV_G_LIQUID: return g_glass.liquid;
         case BV_G_LIVE: return g_glass.live;
         case BV_BARSTYLE: return g_settings.barStyle;
+        case BV_G_STYLE: return g_glass.tinted ? 1 : 0;
+        case BV_TCOLOR: return TintPaletteIndex();
+        case BV_TLEVEL: return g_settings.tintLevel;
+        case BV_TREACH: return g_settings.tintReach;
         case BV_BSSTYLE: return g_bsStyle;
         case BV_ISLSTYLE: return g_settings.islStyle;
         case BV_ISLSIZE: return std::clamp((g_settings.islSize - 80) * 100 / 60, 0, 100);
@@ -11391,7 +11502,7 @@ static void BsLoadLook() {
         g_bsStyle = st;
         g_bsTransp = std::clamp(tr, 0, 100);
     } else {
-        g_bsStyle = (g_glass.liquid || g_settings.barStyle == 2) ? 1 : 0;
+        g_bsStyle = (g_glass.liquid || g_settings.barStyle >= 2) ? 1 : 0;
         g_bsTransp = g_glass.transparency;
     }
 }
@@ -11530,12 +11641,56 @@ static void BsSet(int val, int v) {
         return;
     }
     if (val == BV_BARSTYLE) {
-        static const PCWSTR kNames[] = {L"glass", L"transparent", L"liquid"};
-        v = std::clamp(v, 0, 2);
+        static const PCWSTR kNames[] = {L"glass", L"transparent", L"liquid", L"tinted"};
+        v = std::clamp(v, 0, 3);
         if (g_settings.barStyle == v) return;
         g_settings.barStyle = v;
         OvrSetStr(L"barStyle", kNames[v]);
         BarsRestyle();  // troca o fundo na barra que já existe
+        TintApply();    // a cor do texto da barra segue a cor do vidro
+        return;
+    }
+    if (val == BV_G_STYLE) {
+        bool want = v == 1;
+        if (g_glass.tinted == want) return;
+        g_glass.tinted = want;
+        if (want) {
+            // Os padrões do tema no Siri Plus: limpo abaixo da cor, sem desfoque, refração 70 %.
+            g_glass.liquid = true;
+            g_glass.clear = true;
+            g_glass.transparency = 100;
+            g_glass.blur = 0;
+            g_glass.refraction = 70;
+        }
+        SaveGlassPrefs();
+        TintApply();
+        return;
+    }
+    if (val == BV_TCOLOR) {
+        if (v < 0) {  // o primeiro círculo: a paleta do Windows
+            static COLORREF custom[16] = {};
+            DWORD c = g_settings.tintColor;
+            CHOOSECOLORW cc{sizeof(cc)};
+            cc.hwndOwner = FindWindowW(kBsClass, nullptr);  // a janela de ajustes
+            cc.rgbResult = RGB((c >> 16) & 255, (c >> 8) & 255, c & 255);
+            cc.lpCustColors = custom;
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+            if (!ChooseColorW(&cc)) return;
+            g_settings.tintColor = ((DWORD)GetRValue(cc.rgbResult) << 16) | ((DWORD)GetGValue(cc.rgbResult) << 8) | GetBValue(cc.rgbResult);
+        } else {
+            g_settings.tintColor = kTintPalette[std::min(v, (int)ARRAYSIZE(kTintPalette) - 1)];
+        }
+        wchar_t hex[8];
+        swprintf(hex, ARRAYSIZE(hex), L"#%06X", (unsigned)g_settings.tintColor);
+        OvrSetStr(L"tintColor", hex);
+        TintApply();
+        return;
+    }
+    if (val == BV_TLEVEL || val == BV_TREACH) {
+        v = std::clamp(v, 0, 100);
+        (val == BV_TLEVEL ? g_settings.tintLevel : g_settings.tintReach) = v;
+        OvrSetInt(val == BV_TLEVEL ? L"tintLevel" : L"tintReach", v);
+        TintApply();
         return;
     }
     v = std::clamp(v, 0, 100);
@@ -11553,6 +11708,15 @@ static void BsSet(int val, int v) {
         default: return;
     }
     SaveGlassPrefs();
+}
+
+// Vidro líquido personalizado mudou (estilo, cor, força ou alcance): o texto
+// segue a cor nova e a barra e os painéis abertos se redesenham.
+static void TintApply() {
+    ResolveTheme();
+    for (Bar* b : g_bars) ApplyGlass(b);
+    RedrawAll();
+    if (g_cc.hwnd) CcOnUpdate();
 }
 
 // ---------------------------------------------------------------------------
@@ -11778,6 +11942,8 @@ static void BsReleaseFormats() {
 
 // Opções das escolhas (abrem num menu, como no Siri Plus Launchpad).
 static const PCWSTR kBsChoices[] = {L"Vidro", L"Transparente", L"Líquido"};
+static const PCWSTR kBsBarChoices[] = {L"Vidro", L"Transparente", L"Líquido", L"Vidro líquido personalizado"};
+static const PCWSTR kBsGlassStyle[] = {L"Transparente", L"Vidro líquido personalizado"};
 static const PCWSTR kBsLookChoices[] = {L"Desfoque", L"Líquido", L"Transparente"};
 static const PCWSTR kBsMenuChoices[] = {L"Vidro", L"Igual à Central"};
 static const PCWSTR kBsIslStyle[] = {L"Vidro", L"Líquido", L"Escuro"};
@@ -11809,12 +11975,15 @@ static const PCWSTR* BsChoiceLabels(int val) {
         case BV_SEARCHTGT: return kBsSearchTgt;
         case BV_NPBAR: return kBsNpBar;
         case BV_LANG: return kBsLang;
+        case BV_BARSTYLE: return kBsBarChoices;
+        case BV_G_STYLE: return kBsGlassStyle;
     }
     return kBsChoices;
 }
 static int BsChoiceCount(int val) {
     switch (val) {
-        case BV_MENUGLASS: case BV_ISLPOS: case BV_WXUNIT: case BV_WXLOOK: case BV_NPLAYOUT: case BV_SEARCHTGT: return 2;
+        case BV_MENUGLASS: case BV_ISLPOS: case BV_WXUNIT: case BV_WXLOOK: case BV_NPLAYOUT: case BV_SEARCHTGT: case BV_G_STYLE: return 2;
+        case BV_BARSTYLE: return 4;
         case BV_LANG: return (int)ARRAYSIZE(kBsLang);
         case BV_ISLIN: return 4;
         case BV_ISLOUT: return 5;
@@ -12248,10 +12417,30 @@ static void BsDrawRow(size_t i, const BsRow& row, float oy) {
             for (int k = 0; k <= kSelCount; k++) {
                 D2D1_POINT_2F p = BsSwatchCenter(c, k);
                 D2D1_ELLIPSE el = D2D1::Ellipse(p, rad, rad);
-                if (k == 0) {
+                const bool tintRow = d.val == BV_TCOLOR;
+                if (k == 0 && tintRow) {
+                    // A paleta do Windows: a cor escolhida nela, ou um "+".
+                    DWORD cv = g_settings.tintColor;
+                    if (v < 0) {
+                        g_bs.brush->SetColor(D2D1::ColorF(((cv >> 16) & 255) / 255.0f, ((cv >> 8) & 255) / 255.0f, (cv & 255) / 255.0f, 1));
+                        rt->FillEllipse(el, g_bs.brush);
+                    } else {
+                        g_bs.brush->SetColor(BsFg(0.14f));
+                        rt->FillEllipse(el, g_bs.brush);
+                        BsGlyph(0xE710, p.x, p.y, 9 * s, BsFg(0.80f));
+                    }
+                    g_bs.brush->SetColor(BsFg(0.35f));
+                    rt->DrawEllipse(el, g_bs.brush, 1 * s);
+                } else if (k == 0) {
                     g_bs.brush->SetColor(BsFg(0.14f));
                     rt->FillEllipse(el, g_bs.brush);
                     g_bs.brush->SetColor(BsFg(0.35f));
+                    rt->DrawEllipse(el, g_bs.brush, 1 * s);
+                } else if (tintRow) {
+                    DWORD cv = kTintPalette[k - 1];
+                    g_bs.brush->SetColor(D2D1::ColorF(((cv >> 16) & 255) / 255.0f, ((cv >> 8) & 255) / 255.0f, (cv & 255) / 255.0f, 1));
+                    rt->FillEllipse(el, g_bs.brush);
+                    g_bs.brush->SetColor(BsFg(0.30f));  // o preto e o branco também aparecem sobre o fundo da janela
                     rt->DrawEllipse(el, g_bs.brush, 1 * s);
                 } else {
                     DWORD cv = kSelPalette[k - 1].rgb;
@@ -12586,7 +12775,11 @@ static void BsRender() {
 static bool BsRowDisabled(int rowIdx) {
     if (rowIdx < 0 || rowIdx >= (int)g_bs.rows.size()) return false;
     const BsRowDef& d = kBsRows[g_bs.rows[rowIdx].def];
-    return d.kind != BR_HEADER && d.val == BV_MENUTRANSP && g_settings.menuGlass == 1;
+    if (d.kind == BR_HEADER) return false;
+    if (d.val == BV_MENUTRANSP) return g_settings.menuGlass == 1;
+    // Cor, força e alcance só valem com o Vidro líquido personalizado nos painéis ou na barra.
+    if (d.val == BV_TCOLOR || d.val == BV_TLEVEL || d.val == BV_TREACH) return !g_glass.tinted && g_settings.barStyle != 3;
+    return false;
 }
 static int BsHitRaw(float x, float y, int* part);
 static int BsHit(float x, float y, int* part) {
@@ -19594,9 +19787,38 @@ static std::wstring VolGlyph() {
 static const wchar_t kShadowClass[] = L"WhFinderTopBarShadow";
 
 // O fundo refratado e uma camada de vidro bem leve (translúcida).
+// Fundo "Vidro líquido personalizado": a cor no topo da barra, sumindo em vidro
+// limpo, e a linha fina de luz ao longo da borda de baixo (sem refração
+// disponível, a cor não some de todo, para o texto continuar legível).
+static void DrawBarTint(Bar* b, float w, float h, float s, bool refracted) {
+    float top = g_settings.tintLevel / 100.0f;
+    float bottom = std::min(top, (100 - g_glass.transparency) / 100.0f * 0.8f);
+    if (!refracted) bottom = std::max(bottom, std::min(top, 0.55f));
+    if (auto* g = MakeTintBrush(b->rt, 0, h, top, bottom, g_settings.tintReach / 100.0f)) {
+        b->rt->FillRectangle(D2D1::RectF(0, 0, w, h), g);
+        g->Release();
+    }
+    // Halo suave logo acima da linha.
+    float gh = 2.4f * s;
+    D2D1_GRADIENT_STOP halo[] = {{0.0f, D2D1::ColorF(1, 1, 1, 0.0f)}, {1.0f, D2D1::ColorF(1, 1, 1, 0.13f)}};
+    if (auto* g = MakeGradient(b->rt, D2D1::Point2F(0, h - gh - 0.75f * s), D2D1::Point2F(0, h - 0.75f * s), halo, 2)) {
+        b->rt->FillRectangle(D2D1::RectF(0, h - gh - 0.75f * s, w, h - 0.75f * s), g);
+        g->Release();
+    }
+    // A linha: mais forte no meio da barra, apagando nas pontas.
+    float lw = std::max(0.75f, 0.75f * s);
+    D2D1_GRADIENT_STOP line[] = {{0.0f, D2D1::ColorF(1, 1, 1, 0.14f)}, {0.5f, D2D1::ColorF(1, 1, 1, 0.62f)},
+                                 {1.0f, D2D1::ColorF(1, 1, 1, 0.14f)}};
+    if (auto* g = MakeGradient(b->rt, D2D1::Point2F(0, 0), D2D1::Point2F(w, 0), line, 3)) {
+        b->rt->FillRectangle(D2D1::RectF(0, h - lw, w, h), g);
+        g->Release();
+    }
+}
+
 static void DrawBarLiquid(Bar* b, float w, float h, float s) {
     D2D1_RECT_F r = D2D1::RectF(0, 0, w, h);
     LqDraw(b->rt, *b->lq, r, 0, s);
+    if (g_settings.barStyle == 3) return;  // a cor e a linha vêm de DrawBarTint
     float a = 0;  // totalmente transparente: só a refração, o brilho e as bordas
     D2D1_GRADIENT_STOP body[] = {{0.0f, g_light ? D2D1::ColorF(1, 1, 1, a * 1.4f) : D2D1::ColorF(0.05f, 0.05f, 0.06f, a)},
                                  {1.0f, g_light ? D2D1::ColorF(1, 1, 1, a) : D2D1::ColorF(0.05f, 0.05f, 0.06f, a * 0.8f)}};
@@ -19680,7 +19902,7 @@ static void BarLiquidTick() {
 
 // Prepara a barra para o estilo escolhido (chamado ao criar).
 static void BarSetupStyle(Bar* b) {
-    if (g_settings.barStyle == 2) {
+    if (g_settings.barStyle >= 2) {
         b->lq = new LiquidSurface();
         b->lq->live = true;
         b->lq->wnd = b->hwnd;
@@ -20156,7 +20378,8 @@ static void Render(Bar* b) {
     b->rt->BeginDraw();
     b->rt->Clear(D2D1::ColorF(0, 0, 0, 0));
     bool see = g_settings.barStyle != 0 && !b->solid;  // fundo transparente ou líquido
-    if (see && g_settings.barStyle == 2 && b->lq) DrawBarLiquid(b, w, h, s);
+    if (see && g_settings.barStyle >= 2 && b->lq) DrawBarLiquid(b, w, h, s);
+    if (see && g_settings.barStyle == 3) DrawBarTint(b, w, h, s, b->lq != nullptr);
 
     // Destaque em pílula, centralizado na altura da barra; fosco ou azul.
     std::vector<char> selItem(b->items.size(), 0);
@@ -21954,6 +22177,15 @@ const UiTr kUiTr[] = {
     {L"Refração nas bordas", L"Edge refraction", L"Refracción en los bordes", L"Réfraction sur les bords", L"Lichtbrechung an den Rändern", L"Rifrazione sui bordi", L"边缘折射"},
     {L"Desfoque do fundo", L"Background blur", L"Desenfoque del fondo", L"Flou de l’arrière-plan", L"Hintergrundunschärfe", L"Sfocatura dello sfondo", L"背景模糊"},
     {L"Acompanhar o fundo ao vivo", L"Follow the background live", L"Seguir el fondo en vivo", L"Suivre l’arrière-plan en direct", L"Hintergrund live verfolgen", L"Segui lo sfondo in tempo reale", L"实时跟随背景"},
+    {L"Vidro líquido personalizado", L"Custom liquid glass", L"Vidrio líquido personalizado", L"Verre liquide personnalisé", L"Eigenes Flüssigglas", L"Vetro liquido personalizzato", L"自定义液态玻璃"},
+    {L"Estilo do vidro", L"Glass style", L"Estilo del vidrio", L"Style du verre", L"Glasstil", L"Stile del vetro", L"玻璃样式"},
+    {L"Vidro líquido personalizado: a sua cor no topo, sumindo em vidro limpo embaixo", L"Custom liquid glass: your color at the top, fading to clear glass at the bottom", L"Vidrio líquido personalizado: tu color arriba, que se desvanece en vidrio transparente abajo", L"Verre liquide personnalisé : votre couleur en haut, qui s’efface en verre clair en bas", L"Eigenes Flüssigglas: deine Farbe oben, die unten in klares Glas übergeht", L"Vetro liquido personalizzato: il tuo colore in alto, che sfuma in vetro trasparente in basso", L"自定义液态玻璃：顶部是你的颜色，向下渐变为透明玻璃"},
+    {L"Cor do vidro", L"Glass color", L"Color del vidrio", L"Couleur du verre", L"Glasfarbe", L"Colore del vetro", L"玻璃颜色"},
+    {L"O primeiro círculo abre a paleta do Windows, para qualquer cor", L"The first circle opens the Windows color picker, for any color", L"El primer círculo abre la paleta de Windows, para cualquier color", L"Le premier cercle ouvre la palette de Windows, pour n’importe quelle couleur", L"Der erste Kreis öffnet die Windows-Farbauswahl für jede Farbe", L"Il primo cerchio apre la tavolozza di Windows, per qualsiasi colore", L"第一个圆圈打开 Windows 调色板，可选任意颜色"},
+    {L"Força da cor no topo", L"Color strength at the top", L"Intensidad del color arriba", L"Intensité de la couleur en haut", L"Farbstärke oben", L"Intensità del colore in alto", L"顶部颜色强度"},
+    {L"100 = sólida no topo; menos deixa o fundo aparecer também na parte colorida", L"100 = solid at the top; lower lets the background show through the colored part too", L"100 = sólido arriba; menos deja ver el fondo también en la parte de color", L"100 = opaque en haut ; moins laisse aussi voir l’arrière-plan dans la partie colorée", L"100 = oben deckend; weniger lässt den Hintergrund auch im farbigen Teil durchscheinen", L"100 = pieno in alto; meno lascia vedere lo sfondo anche nella parte colorata", L"100 = 顶部不透明；数值越低，彩色部分也越能透出背景"},
+    {L"Até onde a cor desce", L"How far down the color goes", L"Hasta dónde baja el color", L"Jusqu’où descend la couleur", L"Wie weit die Farbe nach unten reicht", L"Fin dove scende il colore", L"颜色向下延伸的范围"},
+    {L"Valores baixos mantêm a cor perto do topo; altos a trazem para baixo", L"Low values keep the color near the top; high values bring it down", L"Valores bajos mantienen el color cerca de arriba; altos lo bajan", L"Des valeurs basses gardent la couleur près du haut ; élevées la font descendre", L"Niedrige Werte halten die Farbe oben; hohe bringen sie nach unten", L"Valori bassi tengono il colore vicino all’alto; alti lo portano in basso", L"数值低时颜色靠近顶部；数值高时向下延伸"},
     {L"Vídeos e papéis de parede animados continuam aparecendo atrás do vidro", L"Videos and animated wallpapers keep showing behind the glass", L"Los vídeos y fondos animados se siguen viendo detrás del vidrio", L"Les vidéos et fonds d’écran animés restent visibles derrière le verre", L"Videos und animierte Hintergründe bleiben hinter dem Glas sichtbar", L"Video e sfondi animati restano visibili dietro il vetro", L"视频和动态壁纸仍会显示在玻璃后面"},
     {L"Pílulas de aviso", L"Notice Pills", L"Píldoras de aviso", L"Pastilles d’alerte", L"Hinweis-Pillen", L"Pillole di avviso", L"提醒胶囊"},
     {L"Avisos que descem da barra e o botão de Notificações", L"Notices that drop from the bar and the Notifications button", L"Avisos que bajan de la barra y el botón de Notificaciones", L"Alertes qui descendent de la barre et bouton Notifications", L"Hinweise, die aus der Leiste fallen, und die Mitteilungstaste", L"Avvisi che scendono dalla barra e il pulsante Notifiche", L"从菜单栏下拉的提醒和通知按钮"},
