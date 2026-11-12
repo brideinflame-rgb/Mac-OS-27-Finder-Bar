@@ -18220,21 +18220,42 @@ static std::wstring ToastImagePath(const std::wstring& aumid, std::wstring src) 
     NotifReply& r = m->reply;
     // A foto de quem mandou: a imagem que o app põe no lugar do ícone (WhatsApp,
     // Discord, Teams...). Lida já, porque alguns apps apagam o arquivo depois.
-    for (const std::wstring& img : XmlTags(xml, L"image")) {
-        if (XmlAttr(img, L"placement") != L"appLogoOverride") continue;
-        std::wstring path = ToastImagePath(m->aumid, XmlAttr(img, L"src"));
-        if (path.empty()) break;
-        HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                               OPEN_EXISTING, 0, nullptr);
-        if (f == INVALID_HANDLE_VALUE) break;
-        LARGE_INTEGER size{};
-        if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
-            auto data = std::make_shared<std::string>((size_t)size.QuadPart, '\0');
-            DWORD got = 0;
-            if (ReadFile(f, &(*data)[0], (DWORD)data->size(), &got, nullptr) && got == data->size()) m->avatar = data;
+    // Qual imagem: a que substitui o ícone; senão, a primeira recortada em círculo.
+    std::vector<std::wstring> images = XmlTags(xml, L"image");
+    const std::wstring* pick = nullptr;
+    for (const std::wstring& img : images) {
+        // No log do Windhawk, para ver como cada app manda a foto.
+        Wh_Log(L"Notification image (%s): placement=%s hint-crop=%s src=%s", m->aumid.c_str(),
+               XmlAttr(img, L"placement").c_str(), XmlAttr(img, L"hint-crop").c_str(), XmlAttr(img, L"src").c_str());
+        if (!pick && _wcsicmp(XmlAttr(img, L"placement").c_str(), L"appLogoOverride") == 0) pick = &img;
+    }
+    if (!pick)
+        for (const std::wstring& img : images)
+            if (_wcsicmp(XmlAttr(img, L"hint-crop").c_str(), L"circle") == 0) {
+                pick = &img;
+                break;
+            }
+    if (images.empty()) Wh_Log(L"Notification image (%s): none in the notification", m->aumid.c_str());
+    if (pick) {
+        std::wstring src = XmlAttr(*pick, L"src");
+        std::wstring path = ToastImagePath(m->aumid, src);
+        HANDLE f = path.empty() ? INVALID_HANDLE_VALUE
+                                : CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                              nullptr, OPEN_EXISTING, 0, nullptr);
+        if (path.empty()) {
+            Wh_Log(L"Notification image: no local file for %s", src.c_str());
+        } else if (f == INVALID_HANDLE_VALUE) {
+            Wh_Log(L"Notification image: can't open %s (error %u)", path.c_str(), GetLastError());
+        } else {
+            LARGE_INTEGER size{};
+            if (GetFileSizeEx(f, &size) && size.QuadPart > 0 && size.QuadPart <= 4 * 1024 * 1024) {
+                auto data = std::make_shared<std::string>((size_t)size.QuadPart, '\0');
+                DWORD got = 0;
+                if (ReadFile(f, &(*data)[0], (DWORD)data->size(), &got, nullptr) && got == data->size()) m->avatar = data;
+            }
+            Wh_Log(L"Notification image: %s, %lld bytes, %s", path.c_str(), (long long)size.QuadPart, m->avatar ? L"read" : L"not read");
+            CloseHandle(f);
         }
-        CloseHandle(f);
-        break;
     }
     std::vector<std::wstring> toast = XmlTags(xml, L"toast");
     if (!toast.empty()) {
@@ -18891,6 +18912,7 @@ static ID2D1Bitmap* NtfAvatar(const IslandNote& n) {
     if (it != g_ntf.avatars.end()) return it->second;
     std::vector<BYTE> bytes(n.avatar->begin(), n.avatar->end());
     ID2D1Bitmap* bmp = DecodeImage(g_ntf.rt, bytes);
+    if (!bmp) Wh_Log(L"Notification image: couldn't decode %zu bytes", bytes.size());
     if (g_ntf.avatars.size() > 60) {
         for (auto& kv : g_ntf.avatars) SafeRelease(kv.second);
         g_ntf.avatars.clear();
