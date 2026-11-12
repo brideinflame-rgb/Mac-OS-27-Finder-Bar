@@ -18211,6 +18211,69 @@ static std::wstring ToastImagePath(const std::wstring& aumid, std::wstring src) 
     return L"";
 }
 
+// Foto que vem como endereço da internet (WhatsApp, por exemplo): o próprio
+// Windows a baixa para mostrar a notificação e guarda uma cópia em
+// %LOCALAPPDATA%\\Microsoft\\Windows\\Notifications\\wpnidm. Não há registro
+// documentado de qual arquivo é de qual endereço, então vale o horário: o
+// arquivo gravado logo antes desta notificação aparecer (experimental). Nada
+// é baixado pelo mod.
+static std::wstring WpnidmGuess(ULONGLONG arrivedFt) {
+    wchar_t local[MAX_PATH];
+    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH)) return L"";
+    std::wstring dir = std::wstring(local) + L"\\Microsoft\\Windows\\Notifications\\wpnidm\\";
+    std::wstring best;
+    ULONGLONG bestFt = 0;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dir + L"*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        Wh_Log(L"Notification image: no wpnidm folder (error %u)", GetLastError());
+        return L"";
+    }
+    int seen = 0;
+    do {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        seen++;
+        ULONGLONG ft = ((ULONGLONG)fd.ftLastWriteTime.dwHighDateTime << 32) | fd.ftLastWriteTime.dwLowDateTime;
+        ULONGLONG ct = ((ULONGLONG)fd.ftCreationTime.dwHighDateTime << 32) | fd.ftCreationTime.dwLowDateTime;
+        ft = std::max(ft, ct);
+        // Gravado entre 20 s antes e 3 s depois da chegada (unidades de 100 ns).
+        if (ft + 200000000ULL < arrivedFt || ft > arrivedFt + 30000000ULL) continue;
+        LONGLONG ageMs = ((LONGLONG)arrivedFt - (LONGLONG)ft) / 10000;
+        Wh_Log(L"Notification image: wpnidm candidate %s, %lld ms before, %u bytes", fd.cFileName, ageMs, fd.nFileSizeLow);
+        if (ft > bestFt) {
+            bestFt = ft;
+            best = dir + fd.cFileName;
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    if (best.empty()) Wh_Log(L"Notification image: no recent file among %d in wpnidm", seen);
+    // Para descobrir um jeito exato depois: o que a chave do Windows guarda.
+    static bool dumped = false;
+    HKEY key;
+    if (!dumped && RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\PushNotifications\\wpnidm", 0,
+                                 KEY_READ, &key) == ERROR_SUCCESS) {
+        dumped = true;
+        wchar_t name[256];
+        for (DWORD i = 0; i < 12; i++) {
+            DWORD nl = ARRAYSIZE(name), type = 0;
+            BYTE data[512];
+            DWORD dl = sizeof(data);
+            LONG r = RegEnumValueW(key, i, name, &nl, nullptr, &type, data, &dl);
+            if (r == ERROR_NO_MORE_ITEMS) break;
+            if (r != ERROR_SUCCESS) continue;
+            Wh_Log(L"wpnidm value %u: %s (type %u, %u bytes)%s%s", i, name, type, dl, type == REG_SZ ? L" = " : L"",
+                   type == REG_SZ ? (PCWSTR)data : L"");
+        }
+        for (DWORD i = 0; i < 12; i++) {
+            DWORD nl = ARRAYSIZE(name);
+            if (RegEnumKeyExW(key, i, name, &nl, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
+            Wh_Log(L"wpnidm subkey %u: %s", i, name);
+        }
+        RegCloseKey(key);
+    }
+    return best;
+}
+
 // Monta o que dá para fazer com a notificação (na thread das notificações).
 [[maybe_unused]] static void NotifReadReply(NotifMsg* m) {
     if (m->aumid.empty()) return;
@@ -18239,6 +18302,11 @@ static std::wstring ToastImagePath(const std::wstring& aumid, std::wstring src) 
     if (pick) {
         std::wstring src = XmlAttr(*pick, L"src");
         std::wstring path = ToastImagePath(m->aumid, src);
+        if (path.empty() && (_wcsnicmp(src.c_str(), L"https://", 8) == 0 || _wcsnicmp(src.c_str(), L"http://", 7) == 0)) {
+            FILETIME now;
+            GetSystemTimeAsFileTime(&now);
+            path = WpnidmGuess(((ULONGLONG)now.dwHighDateTime << 32) | now.dwLowDateTime);
+        }
         HANDLE f = path.empty() ? INVALID_HANDLE_VALUE
                                 : CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                               nullptr, OPEN_EXISTING, 0, nullptr);
