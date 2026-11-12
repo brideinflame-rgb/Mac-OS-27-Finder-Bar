@@ -6092,12 +6092,8 @@ static void DrawLiquidGlass(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, con
         float bottom = std::min(top, (100 - g_glass.transparency) / 100.0f * 0.8f);
         // Sem refração nem desfoque atrás, um fundo limpo deixaria o que está atrás nítido sob o texto.
         if (!glassOk) bottom = std::max(bottom, std::min(top, 0.55f));
-        if (small) {
-            // Botões e blocos (Central): a cor por igual, mais leve, sobre o painel já tingido.
-            br->SetColor(D2D1::ColorF(((g_settings.tintColor >> 16) & 255) / 255.0f, ((g_settings.tintColor >> 8) & 255) / 255.0f,
-                                      (g_settings.tintColor & 255) / 255.0f, std::max(bottom, top * 0.35f) * tint));
-            rt->FillRoundedRectangle(rr, br);
-        } else if (auto* body = MakeTintBrush(rt, r.top, r.bottom, top * tint, bottom * tint, g_settings.tintReach / 100.0f)) {
+        // Cada peça tem o seu degradê, inclusive cada pílula e botão da Central.
+        if (auto* body = MakeTintBrush(rt, r.top, r.bottom, top * tint, bottom * tint, g_settings.tintReach / 100.0f)) {
             rt->FillRoundedRectangle(rr, body);
             body->Release();
         }
