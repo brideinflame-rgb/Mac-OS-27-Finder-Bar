@@ -9740,6 +9740,7 @@ struct Osd {
     ID2D1DCRenderTarget* rt = nullptr;
     ID2D1SolidColorBrush* brush = nullptr;
     IDWriteTextFormat* fIcon = nullptr;
+    IDWriteTextFormat* fPct = nullptr;  // a porcentagem à direita
     HDC memDC = nullptr;
     HBITMAP dib = nullptr;
     HGDIOBJ oldBmp = nullptr;
@@ -9759,6 +9760,7 @@ static void OsdReleaseGraphics() {
     SafeRelease(g_osd.brush);
     SafeRelease(g_osd.rt);
     SafeRelease(g_osd.fIcon);
+    SafeRelease(g_osd.fPct);
     if (g_osd.memDC) {
         if (g_osd.oldBmp) SelectObject(g_osd.memDC, g_osd.oldBmp);
         DeleteDC(g_osd.memDC);
@@ -9865,8 +9867,22 @@ static void OsdRender() {
         else DrawLevelVol(rt, br, fg, cx, cy, 26 * s, v, g_osd.mute);
     }
     float cy = (P.top + P.bottom) / 2;
-    DrawSegmentTrack(rt, br, D2D1::RectF(P.left + 74 * s, cy - 2.5f * s, P.right - 34 * s, cy + 2.5f * s), v, s,
+    // A porcentagem à direita da barra de segmentos.
+    if (!g_osd.fPct) {
+        g_osd.fPct = MakeFormat(g_settings.fontFamily.c_str(), DWRITE_FONT_WEIGHT_SEMI_BOLD, 15 * s);
+        if (g_osd.fPct) {
+            g_osd.fPct->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+            g_osd.fPct->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
+    }
+    DrawSegmentTrack(rt, br, D2D1::RectF(P.left + 74 * s, cy - 2.5f * s, P.right - 78 * s, cy + 2.5f * s), v, s,
                      0.20f);
+    if (g_osd.fPct) {
+        wchar_t pct[8];
+        swprintf(pct, ARRAYSIZE(pct), L"%d%%", std::clamp(v, 0, 100));
+        br->SetColor(fg);
+        rt->DrawText(pct, (UINT32)wcslen(pct), g_osd.fPct, D2D1::RectF(P.right - 74 * s, P.top, P.right - 26 * s, P.bottom), br);
+    }
     if (anim) PopAnim(rt);
     HRESULT hr = rt->EndDraw();
     SafeRelease(layer);
@@ -9936,9 +9952,38 @@ static HWND FindWinOsd() {
     }
     return nullptr;
 }
+// Diagnóstico (log do Windhawk): as janelas pequenas e sempre visíveis de
+// outros processos logo depois do volume mudar, para achar a pílula do Windows
+// quando ela não é a NativeHWNDHost.
+static ULONGLONG g_winOsdLogTick = 0;
+static BOOL CALLBACK WinOsdLogOne(HWND w, LPARAM) {
+    if (!IsWindowVisible(w)) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(w, &pid);
+    if (pid == GetCurrentProcessId()) return TRUE;
+    RECT r;
+    GetWindowRect(w, &r);
+    int ww = r.right - r.left, hh = r.bottom - r.top;
+    if (ww <= 0 || hh <= 0 || ww > 900 || hh > 400) return TRUE;
+    if (!(GetWindowLongW(w, GWL_EXSTYLE) & WS_EX_TOPMOST)) return TRUE;
+    wchar_t cls[128] = L"", title[128] = L"";
+    GetClassNameW(w, cls, ARRAYSIZE(cls));
+    GetWindowTextW(w, title, ARRAYSIZE(title));
+    Wh_Log(L"Volume pill candidate: class=%s title=\"%s\" pid=%u%s rect=%d,%d %dx%d", cls, title, pid,
+           pid == ShellPid() ? L" (shell)" : L"", r.left, r.top, ww, hh);
+    return TRUE;
+}
+static void WinOsdLogCandidates() { EnumWindows(WinOsdLogOne, 0); }
+
 static void WinOsdApply() {
     if (g_settings.showOsd) {
         HWND h = FindWinOsd();
+        ULONGLONG now = GetTickCount64();
+        if (now - g_winOsdLogTick > 3000) {
+            g_winOsdLogTick = now;
+            Wh_Log(L"Windows volume pill (NativeHWNDHost): %s", h ? (IsIconic(h) ? L"found, minimized" : L"found, hiding") : L"not found");
+            if (g_owner) SetTimer(g_owner, 85, 250, nullptr);  // as candidatas, logo depois de a pílula aparecer
+        }
         if (h && !IsIconic(h)) ShowWindow(h, SW_MINIMIZE);
         if (h) g_winOsdHidden = h;
     } else if (g_winOsdHidden) {
@@ -21715,6 +21760,11 @@ static LRESULT CALLBACK OwnerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             SetTimer(hwnd, TIMER_RELOAD, 250, nullptr);
             return 0;
         case WM_TIMER:
+            if (wp == 85) {
+                KillTimer(hwnd, 85);
+                WinOsdLogCandidates();
+                return 0;
+            }
             if (wp == TIMER_RELOAD) {
                 KillTimer(hwnd, TIMER_RELOAD);
                 if (g_reloadDeferred) {
