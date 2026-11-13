@@ -22,7 +22,7 @@ Um mod do [Windhawk](https://windhawk.net) que coloca uma barra de menus no esti
 - **Previsão do tempo**: a temperatura na barra e um widget de vidro com a previsão (Open-Meteo, MET Norway ou wttr.in, sem precisar de conta)
 - **Vidro ao vivo**: a barra e os painéis desfocam o que está atrás deles em tempo real, com um vidro líquido experimental com refração nas bordas (ligado por padrão)
 - **Vidro líquido personalizado** (o tema do Siri Plus Launchpad): a sua cor no topo, sumindo em vidro limpo embaixo, com uma linha fina de luz na borda de baixo. Vale para os painéis, para o fundo da barra ou para os dois; a cor, a força e até onde a cor desce ficam em Ajustes da Barra de Menus
-- **Barra e menus**: barra transparente (padrão), de vidro desfocado ou de vidro líquido, opaca com o app maximizado; menus com vidro fosco próprio ou o mesmo vidro da Central; tema claro, escuro ou automático, nove cores de seleção, fonte e tamanhos; some com apps em tela cheia, ocultar automaticamente opcional, todos os monitores
+- **Barra e menus**: barra transparente (padrão), de vidro desfocado ou de vidro líquido, opaca com o app maximizado; um vidro só para a Central, os menus, os painéis e as pílulas; tema claro, escuro ou automático, nove cores de seleção, fonte e tamanhos; some com apps em tela cheia, ocultar automaticamente opcional, todos os monitores
 - **Janela de ajustes**: logo → **Ajustes da Barra de Menus…** abre os ajustes numa janela no estilo do macOS, com busca, aplicados na hora, sem reiniciar a barra
 - **O seu idioma**: segue o idioma do Windows, ou escolha um (inglês, português, espanhol, francês, alemão, italiano e chinês simplificado)
 
@@ -61,7 +61,7 @@ A barra roda num processo próprio do Windhawk (aparece como Windhawk no Gerenci
 ## Limitações conhecidas
 
 - Apps sem barra de menus clássica usam menus prontos baseados em atalhos de teclado.
-- O Bluetooth lista os aparelhos clássicos (não BLE) e abre as Configurações para conectar e desconectar.
+- O Bluetooth lista os aparelhos clássicos (não BLE) conectados; conectar e desconectar um aparelho já pareado abre as Configurações. Aparelhos novos podem ser encontrados e pareados na pílula do Bluetooth, menos os que pedem para digitar um código, que precisam das Configurações.
 - O modo de energia e a economia de energia usam funções não documentadas do Windows; se o Windows recusar, o bloco abre a página certa das Configurações.
 - A gravação de tela usa Win+Shift+R e precisa da Ferramenta de Captura atualizada.
 - Responder pela pílula funciona com apps que registram um ativador de notificações no Windows; senão, a pílula abre o app e copia o seu texto.

@@ -22,7 +22,7 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Weather**: the temperature on the bar and a glass widget with the forecast (Open-Meteo, MET Norway or wttr.in, no account needed)
 - **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
-- **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; menus in their own frosted glass or the same glass as the Control Center; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
+- **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; one glass for the Control Center, menus, panels and pills; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
 - **Settings window**: logo → **Menu Bar Settings…** opens the settings in a macOS-style window, with search, applied live without restarting the bar
 - **Your language**: follows the Windows display language, or pick one (English, Portuguese, Spanish, French, German, Italian and Simplified Chinese)
 
@@ -61,7 +61,7 @@ The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so
 ## Known limitations
 
 - Apps without a classic menu bar use ready-made menus based on keyboard shortcuts.
-- Bluetooth lists classic (non-BLE) devices and opens Settings to connect and disconnect.
+- Bluetooth lists the connected classic (non-BLE) devices; connecting and disconnecting a paired device opens Settings. New devices can be found and paired in the bar's Bluetooth pill, except devices that ask you to type a code, which need Settings.
 - Power mode and energy saver use undocumented Windows functions; if Windows refuses, the tile opens the matching Settings page.
 - Screen recording uses Win+Shift+R and needs an up-to-date Snipping Tool.
 - Replying from the pill works with apps that register a notification activator with Windows; otherwise the pill opens the app and copies your text.
