@@ -247,7 +247,6 @@ The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so
 #include <mmdeviceapi.h>
 #include <endpointvolume.h>
 #include <audiopolicy.h>
-#include <appmodel.h>
 #include <propidl.h>
 #include <wincodec.h>
 #include <wbemidl.h>
@@ -993,7 +992,6 @@ struct Status {
 struct ExtState {
     int dnd = -1;                               // Não Perturbe (-1 desconhecido)
     std::vector<std::wstring> micApps, camApps; // apps usando microfone/câmera agora
-    std::vector<std::wstring> camKeys;          // de cada app da câmera: caminho do .exe ou família do pacote
     int micMuted = -1;                          // microfone padrão silenciado (-1 sem microfone)
     bool mediaHas = false, playing = false;
     std::wstring title, artist;
@@ -9859,9 +9857,7 @@ static void OsdRender() {
 
     D2D1_COLOR_F fg = D2D1::ColorF(1, 1, 1, 0.98f);
     int v = g_osd.mute ? 0 : g_osd.value;
-    wchar_t glyph = g_osd.kind == 1 ? 0xE706 : v <= 0 ? 0xE74F : v < 34 ? 0xE993 : v < 67 ? 0xE994 : 0xE995;
     {
-        (void)glyph;
         float cx = P.left + 42 * s, cy = (P.top + P.bottom) / 2;
         if (g_osd.kind == 1) DrawLevelSun(rt, br, fg, cx, cy, 26 * s, v);
         else DrawLevelVol(rt, br, fg, cx, cy, 26 * s, v, g_osd.mute);
@@ -9952,38 +9948,9 @@ static HWND FindWinOsd() {
     }
     return nullptr;
 }
-// Diagnóstico (log do Windhawk): as janelas pequenas e sempre visíveis de
-// outros processos logo depois do volume mudar, para achar a pílula do Windows
-// quando ela não é a NativeHWNDHost.
-static ULONGLONG g_winOsdLogTick = 0;
-static BOOL CALLBACK WinOsdLogOne(HWND w, LPARAM) {
-    if (!IsWindowVisible(w)) return TRUE;
-    DWORD pid = 0;
-    GetWindowThreadProcessId(w, &pid);
-    if (pid == GetCurrentProcessId()) return TRUE;
-    RECT r;
-    GetWindowRect(w, &r);
-    int ww = r.right - r.left, hh = r.bottom - r.top;
-    if (ww <= 0 || hh <= 0 || ww > 900 || hh > 400) return TRUE;
-    if (!(GetWindowLongW(w, GWL_EXSTYLE) & WS_EX_TOPMOST)) return TRUE;
-    wchar_t cls[128] = L"", title[128] = L"";
-    GetClassNameW(w, cls, ARRAYSIZE(cls));
-    GetWindowTextW(w, title, ARRAYSIZE(title));
-    Wh_Log(L"Volume pill candidate: class=%s title=\"%s\" pid=%u%s rect=%d,%d %dx%d", cls, title, pid,
-           pid == ShellPid() ? L" (shell)" : L"", r.left, r.top, ww, hh);
-    return TRUE;
-}
-static void WinOsdLogCandidates() { EnumWindows(WinOsdLogOne, 0); }
-
 static void WinOsdApply() {
     if (g_settings.showOsd) {
         HWND h = FindWinOsd();
-        ULONGLONG now = GetTickCount64();
-        if (now - g_winOsdLogTick > 3000) {
-            g_winOsdLogTick = now;
-            Wh_Log(L"Windows volume pill (NativeHWNDHost): %s", h ? (IsIconic(h) ? L"found, minimized" : L"found, hiding") : L"not found");
-            if (g_owner) SetTimer(g_owner, 85, 250, nullptr);  // as candidatas, logo depois de a pílula aparecer
-        }
         if (h && !IsIconic(h)) ShowWindow(h, SW_MINIMIZE);
         if (h) g_winOsdHidden = h;
     } else if (g_winOsdHidden) {
@@ -15739,7 +15706,6 @@ static void CalEnsureLoaded() {
         }
     }
     g_cal.srcs = std::move(next);
-    ULONGLONG now = GetTickCount64();
     for (CalSrc& c : g_cal.srcs) {
         WIN32_FILE_ATTRIBUTE_DATA fa{};
         if (!GetFileAttributesExW(c.src.c_str(), GetFileExInfoStandard, &fa)) {
@@ -16498,8 +16464,7 @@ static bool PrivInUse(HKEY k) {
     return start != 0 && stop == 0;
 }
 
-static void PrivScanKey(HKEY parent, bool packaged, std::vector<std::wstring>& out,
-                        std::vector<std::wstring>* keys = nullptr) {
+static void PrivScanKey(HKEY parent, bool packaged, std::vector<std::wstring>& out) {
     wchar_t name[512];
     for (DWORD i = 0; i < 400; i++) {
         DWORD len = ARRAYSIZE(name);
@@ -16509,15 +16474,7 @@ static void PrivScanKey(HKEY parent, bool packaged, std::vector<std::wstring>& o
         if (RegOpenKeyExW(parent, name, 0, KEY_READ, &k) != ERROR_SUCCESS) continue;
         if (PrivInUse(k)) {
             std::wstring n = PrivPrettyName(name, packaged);
-            if (!n.empty() && std::find(out.begin(), out.end(), n) == out.end()) {
-                out.push_back(n);
-                if (keys) {
-                    // Sem pacote, o nome da chave é o caminho do .exe com "#" no lugar de "\".
-                    std::wstring key = name;
-                    if (!packaged) std::replace(key.begin(), key.end(), L'#', L'\\');
-                    keys->push_back(key);
-                }
-            }
+            if (!n.empty() && std::find(out.begin(), out.end(), n) == out.end()) out.push_back(n);
         }
         RegCloseKey(k);
     }
@@ -16556,15 +16513,15 @@ static void PrivWatchClose() {
     }
 }
 
-static std::vector<std::wstring> PrivScan(PCWSTR cap, std::vector<std::wstring>* keys = nullptr) {
+static std::vector<std::wstring> PrivScan(PCWSTR cap) {
     std::vector<std::wstring> out;
     std::wstring base = std::wstring(L"Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\") + cap;
     HKEY k;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, base.c_str(), 0, KEY_READ, &k) == ERROR_SUCCESS) {
-        PrivScanKey(k, true, out, keys);
+        PrivScanKey(k, true, out);
         HKEY np;
         if (RegOpenKeyExW(k, L"NonPackaged", 0, KEY_READ, &np) == ERROR_SUCCESS) {
-            PrivScanKey(np, false, out, keys);
+            PrivScanKey(np, false, out);
             RegCloseKey(np);
         }
         RegCloseKey(k);
@@ -16746,7 +16703,7 @@ static void CamMonitorStop() {
 }
 
 // Apps com a câmera ligada (pelo monitor): nome e caminho do .exe.
-static void CamSensorApps(std::vector<std::wstring>& names, std::vector<std::wstring>& keys) {
+static void CamSensorApps(std::vector<std::wstring>& names) {
     std::vector<DWORD> pids;
     AcquireSRWLockShared(&g_camLock);
     pids = g_camPids;
@@ -16762,7 +16719,6 @@ static void CamSensorApps(std::vector<std::wstring>& names, std::vector<std::wst
         if (name.empty()) name = PrivPrettyName(path, false);
         if (name.empty() || std::find(names.begin(), names.end(), name) != names.end()) continue;
         names.push_back(name);
-        keys.push_back(path);
     }
 }
 
@@ -17451,24 +17407,16 @@ static void ExtrasPoll() {
         MicSessionApps(e.micApps);
         // Câmera: o registro (como antes) mais o monitor dos sensores, que vê
         // também os apps que o registro deixa de fora.
-        static std::vector<std::wstring> camReg, camRegKeys;
-        if (PrivChanged(1, L"webcam")) {
-            camRegKeys.clear();
-            camReg = PrivScan(L"webcam", &camRegKeys);
-        }
+        static std::vector<std::wstring> camReg;
+        if (PrivChanged(1, L"webcam")) camReg = PrivScan(L"webcam");
         CamMonitorStart();
         e.camApps.clear();
-        e.camKeys.clear();
-        if (g_camMonitorOk) CamSensorApps(e.camApps, e.camKeys);
-        if (e.camApps.empty()) {  // o monitor não viu nada (ou não existe): vale o registro
-            e.camApps = camReg;
-            e.camKeys = camRegKeys;
-        }
+        if (g_camMonitorOk) CamSensorApps(e.camApps);
+        if (e.camApps.empty()) e.camApps = camReg;  // o monitor não viu nada (ou não existe): vale o registro
         e.micMuted = MicMutedGet();
     } else if (!g_settings.showPrivacy) {
         e.micApps.clear();
         e.camApps.clear();
-        e.camKeys.clear();
         g_privWatch[0].armed = g_privWatch[1].armed = false;  // ao religar, lê de novo
     }
     // Tocando agora: pede a leitura ao trabalhador e copia o último resultado.
@@ -17955,9 +17903,7 @@ static void ClipFlushPending() {
 static void ShotOnSaved(std::wstring* path) {
     g_shotTick = GetTickCount64();
     if (g_settings.shotPills) {
-        size_t k = path->find_last_of(L'\\');
         IslandShow(0xE722, 0xBF5AF2, L"Captura de tela", L"Salva · clique para abrir e editar", *path, false);
-        (void)k;
     }
     delete path;
 }
@@ -18866,7 +18812,7 @@ static void NotifOnMsg(NotifMsg* m) {
 
 static const wchar_t kNtfClass[] = L"WhFinderTopBarNotifs";
 struct NtfBlock {
-    int kind;        // 0 cabeçalho do app, 1 cartão, 2 chip "+N", 3 título "Avisos", 4 linha de aviso, 5 vazio
+    int kind;        // 1 cartão (com o app dentro), 2 chip "+N", 3 título "Avisos", 4 linha de aviso, 5 vazio
     D2D1_RECT_F r;   // em coordenadas do conteúdo
     int group = -1;
     std::vector<int> items;  // índices em g_islHist (o primeiro é o mais novo)
@@ -19344,31 +19290,7 @@ static void NtfRender() {
         } swipe(rt, g_ntf.swiping && g_ntf.swipeBlock == (int)bi, g_ntf.swipeDx,
                 1.0f - 0.75f * std::min(1.0f, std::fabs(g_ntf.swipeDx) / std::max(1.0f, (b.r.right - b.r.left) * 0.6f)));
         bool hot = g_ntf.hover == (int)bi && !g_ntf.swiping;
-        if (b.kind == 0) {
-            // Cabeçalho do grupo: ícone do app + nome.
-            const NtfGroup& g = g_ntf.groups[b.group];
-            float is = 18 * s, cy = (r.top + r.bottom) / 2;
-            D2D1_RECT_F ir = D2D1::RectF(r.left + 4 * s, cy - is / 2, r.left + 4 * s + is, cy + is / 2);
-            if (ID2D1Bitmap* ic = NtfIcon(g.aumid)) {
-                rt->DrawBitmap(ic, ir, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-            } else {
-                DWORD c = g.color;
-                br->SetColor(D2D1::ColorF(((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f, 1));
-                rt->FillRoundedRectangle(D2D1::RoundedRect(ir, 5 * s, 5 * s), br);
-                std::wstring ini = g.app.substr(0, 1);
-                br->SetColor(D2D1::ColorF(1, 1, 1, 1));
-                IDWriteTextLayout* l = nullptr;
-                if (SUCCEEDED(g_dwrite->CreateTextLayout(ini.c_str(), (UINT32)ini.size(), g_ntf.fAvatar, is, is, &l))) {
-                    DWRITE_TEXT_RANGE all = {0, (UINT32)ini.size()};
-                    l->SetFontSize(11 * s, all);
-                    rt->DrawTextLayout(D2D1::Point2F(ir.left, ir.top), l, br);
-                    l->Release();
-                }
-            }
-            br->SetColor(fg);
-            rt->DrawText(g.app.c_str(), (UINT32)g.app.size(), g_ntf.fApp, D2D1::RectF(ir.right + 8 * s, r.top, r.right, r.bottom), br,
-                         D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        } else if (b.kind == 1) {
+        if (b.kind == 1) {
             // Cartão: ícone e nome do app, hora e seta; a foto de quem mandou e o
             // texto; o botão Responder. Grupo aberto mostra todos.
             const NtfGroup& g = g_ntf.groups[b.group];
@@ -19563,7 +19485,7 @@ static int NtfHit(float x, float y) {
         for (size_t i = 0; i < g_ntf.blocks.size(); i++) {
             const NtfBlock& b = g_ntf.blocks[i];
             if ((pass == 0) != (b.kind == 2)) continue;
-            if (b.kind == 0 || b.kind == 3 || b.kind == 5) continue;
+            if (b.kind == 3 || b.kind == 5) continue;
             if (x >= b.r.left && x < b.r.right && cy >= b.r.top && cy < b.r.bottom) return (int)i;
         }
     return -1;
@@ -21007,8 +20929,6 @@ static void Render(Bar* b) {
             ItemColor itemColor(fg, b->brush, !shadowPass && placedIdx < selItem.size() && selItem[placedIdx]);
             placedIdx++;
             BounceScope bounce(b->rt, BounceScale(b->bounce[p.spec.kind]), D2D1::Point2F((p.l + p.r) / 2, h / 2));
-            float isz = g_settings.fontSize * s * 1.15f * g_settings.iconScale;
-            (void)isz;
             // Giro: o sol acompanha o brilho.
             float spinDeg = 0;
             if (p.spec.kind == K_DISPLAY) spinDeg = b->sunSpin * 57.2958f;
@@ -21043,8 +20963,7 @@ static void Render(Bar* b) {
                 // Microfone e câmera. Em uso, o ícone fica colorido como no Mac:
                 // laranja no microfone, verde na câmera. Microfone silenciado: o
                 // ícone riscado.
-                float is = s * g_settings.iconScale;
-                float cx = (p.l + p.r) / 2, cy = h / 2, half = (p.r - p.l) / 4;
+                float cx = (p.l + p.r) / 2, half = (p.r - p.l) / 4;
                 struct One { float x; wchar_t g; bool on; D2D1_COLOR_F c; };
                 One ones[2] = {
                     {cx - half, g_ext.micMuted == 1 ? (wchar_t)0xEC54 : (wchar_t)0xE720, !g_ext.micApps.empty(),
@@ -21760,11 +21679,6 @@ static LRESULT CALLBACK OwnerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
             SetTimer(hwnd, TIMER_RELOAD, 250, nullptr);
             return 0;
         case WM_TIMER:
-            if (wp == 85) {
-                KillTimer(hwnd, 85);
-                WinOsdLogCandidates();
-                return 0;
-            }
             if (wp == TIMER_RELOAD) {
                 KillTimer(hwnd, TIMER_RELOAD);
                 if (g_reloadDeferred) {
@@ -22690,7 +22604,6 @@ const UiTr kUiTr[] = {
     {L"A busca abre", L"Search opens", L"La búsqueda abre", L"La recherche ouvre", L"Die Suche öffnet", L"La ricerca apre", L"搜索打开"},
     {L"Siri Plus: a janela padrão dele, no estilo Spotlight", L"Siri Plus: its default window, Spotlight style", L"Siri Plus: su ventana predeterminada, estilo Spotlight", L"Siri Plus : sa fenêtre par défaut, style Spotlight", L"Siri Plus: sein Standardfenster im Spotlight-Stil", L"Siri Plus: la sua finestra predefinita, stile Spotlight", L"Siri Plus: 其默认窗口 (Spotlight 风格)"},
     {L"Privacidade (microfone e câmera)", L"Privacy (microphone and camera)", L"Privacidad (micrófono y cámara)", L"Confidentialité (micro et caméra)", L"Datenschutz (Mikrofon und Kamera)", L"Privacy (microfono e fotocamera)", L"隐私 (麦克风和摄像头)"},
-    {L"Pontos laranja e verde quando um app usa o microfone ou a câmera", L"Orange and green dots when an app uses the microphone or camera", L"Puntos naranja y verde cuando una app usa el micrófono o la cámara", L"Points orange et vert quand une app utilise le micro ou la caméra", L"Orange und grüne Punkte, wenn eine App Mikrofon oder Kamera nutzt", L"Punti arancione e verde quando un’app usa il microfono o la fotocamera", L"应用使用麦克风或摄像头时显示橙色和绿色圆点"},
     {L"Barra", L"Bar", L"Barra", L"Barre", L"Leiste", L"Barra", L"菜单栏"},
     {L"Fundo, cores de seleção, tamanho e quando a barra aparece", L"Background, selection colors, size and when the bar shows", L"Fondo, colores de selección, tamaño y cuándo aparece la barra", L"Arrière-plan, couleurs de sélection, taille et affichage de la barre", L"Hintergrund, Auswahlfarben, Größe und wann die Leiste erscheint", L"Sfondo, colori di selezione, dimensioni e quando compare la barra", L"背景、选中颜色、大小以及菜单栏何时显示"},
     {L"Idioma", L"Language", L"Idioma", L"Langue", L"Sprache", L"Lingua", L"语言"},
@@ -22716,10 +22629,7 @@ const UiTr kUiTr[] = {
     {L"Menus e painéis", L"Menus & Panels", L"Menús y paneles", L"Menus et panneaux", L"Menüs und Bereiche", L"Menu e pannelli", L"菜单和面板"},
     {L"Estilo dos menus, Tocando agora, pílulas de volume e brilho", L"Menu style, Now Playing, volume and brightness pills", L"Estilo de los menús, Reproduciendo, píldoras de volumen y brillo", L"Style des menus, À l’écoute, pastilles de volume et de luminosité", L"Menüstil, Aktuelle Wiedergabe, Pillen für Lautstärke und Helligkeit", L"Stile dei menu, In riproduzione, pillole di volume e luminosità", L"菜单样式、正在播放、音量和亮度胶囊"},
     {L"Estilo dos menus", L"Menu style", L"Estilo de los menús", L"Style des menus", L"Menüstil", L"Stile dei menu", L"菜单样式"},
-    {L"A Central de Controle não muda com esta opção", L"The Control Center doesn’t change with this option", L"El Centro de control no cambia con esta opción", L"Le Centre de contrôle ne change pas avec cette option", L"Das Kontrollzentrum ändert sich mit dieser Option nicht", L"Il Centro di Controllo non cambia con questa opzione", L"此选项不影响控制中心"},
     {L"Transparência dos menus (Vidro)", L"Menu transparency (Glass)", L"Transparencia de los menús (Vidrio)", L"Transparence des menus (Verre)", L"Menütransparenz (Glas)", L"Trasparenza dei menu (Vetro)", L"菜单透明度 (玻璃)"},
-    {L"Menus com menos ícones", L"Menus with fewer icons", L"Menús con menos iconos", L"Menus avec moins d’icônes", L"Menüs mit weniger Symbolen", L"Menu con meno icone", L"精简菜单图标"},
-    {L"Tira os ícones de som, Bluetooth, Tocando agora e Foco; o sinal do Wi-Fi fica", L"Removes the sound, Bluetooth, Now Playing and Focus icons; the Wi-Fi signal stays", L"Quita los iconos de sonido, Bluetooth, Reproduciendo y Concentración; la señal de Wi-Fi se mantiene", L"Retire les icônes de son, Bluetooth, À l’écoute et Concentration ; le signal Wi-Fi reste", L"Entfernt die Symbole für Ton, Bluetooth, Wiedergabe und Fokus; das WLAN-Signal bleibt", L"Toglie le icone di audio, Bluetooth, In riproduzione e Full immersion; il segnale Wi-Fi resta", L"移除声音、蓝牙、正在播放和专注图标; 保留 WLAN 信号"},
     {L"Atualizações pendentes no menu do logo", L"Pending updates in the logo menu", L"Actualizaciones pendientes en el menú del logo", L"Mises à jour en attente dans le menu du logo", L"Ausstehende Updates im Logo-Menü", L"Aggiornamenti in sospeso nel menu del logo", L"在徽标菜单中显示待安装更新"},
     {L"Ctrl+F2 navega a barra pelo teclado", L"Ctrl+F2 navigates the bar with the keyboard", L"Ctrl+F2 recorre la barra con el teclado", L"Ctrl+F2 parcourt la barre au clavier", L"Strg+F2 steuert die Leiste per Tastatur", L"Ctrl+F2 naviga nella barra con la tastiera", L"Ctrl+F2 使用键盘浏览菜单栏"},
     {L"Painel", L"Panel", L"Panel", L"Panneau", L"Bereich", L"Pannello", L"面板"},
@@ -22767,8 +22677,6 @@ const UiTr kUiTr[] = {
     {L"Notificações do Windows (experimental)", L"Windows notifications (experimental)", L"Notificaciones de Windows (experimental)", L"Notifications Windows (expérimental)", L"Windows-Mitteilungen (experimentell)", L"Notifiche di Windows (sperimentale)", L"Windows 通知 (实验性)"},
     {L"WhatsApp, Discord, e-mail… Clicar abre o app", L"WhatsApp, Discord, email… Clicking opens the app", L"WhatsApp, Discord, correo… Al hacer clic se abre la app", L"WhatsApp, Discord, e-mail… Un clic ouvre l’app", L"WhatsApp, Discord, E-Mail… Ein Klick öffnet die App", L"WhatsApp, Discord, e-mail… Il clic apre l’app", L"WhatsApp、Discord、电子邮件… 点击打开应用"},
     {L"Texto, imagem ou arquivos copiados", L"Copied text, image or files", L"Texto, imagen o archivos copiados", L"Texte, image ou fichiers copiés", L"Kopierter Text, Bild oder Dateien", L"Testo, immagine o file copiati", L"复制的文本、图片或文件"},
-    {L"Capturas de tela", L"Screenshots", L"Capturas de pantalla", L"Captures d’écran", L"Bildschirmfotos", L"Screenshot", L"截图"},
-    {L"Clique na pílula para abrir a captura", L"Click the pill to open the screenshot", L"Haz clic en la píldora para abrir la captura", L"Cliquez sur la pastille pour ouvrir la capture", L"Auf die Pille klicken, um das Bildschirmfoto zu öffnen", L"Fai clic sulla pillola per aprire lo screenshot", L"点击胶囊打开截图"},
     {L"Downloads concluídos", L"Finished downloads", L"Descargas completadas", L"Téléchargements terminés", L"Abgeschlossene Downloads", L"Download completati", L"下载完成"},
     {L"Clique na pílula para abrir o arquivo", L"Click the pill to open the file", L"Haz clic en la píldora para abrir el archivo", L"Cliquez sur la pastille pour ouvrir le fichier", L"Auf die Pille klicken, um die Datei zu öffnen", L"Fai clic sulla pillola per aprire il file", L"点击胶囊打开文件"},
     {L"Dispositivos USB e discos", L"USB devices and drives", L"Dispositivos USB y discos", L"Périphériques USB et disques", L"USB-Geräte und Laufwerke", L"Dispositivi USB e unità", L"USB 设备和磁盘"},
@@ -22875,7 +22783,6 @@ const UiTr kUiTr[] = {
     {L"Escolher bairro...", L"Choose Neighborhood...", L"Elegir barrio...", L"Choisir le quartier...", L"Stadtteil wählen...", L"Scegli quartiere...", L"选择街区..."},
     {L"Ocultar da barra", L"Hide from the Bar", L"Ocultar de la barra", L"Masquer de la barre", L"Aus der Leiste ausblenden", L"Nascondi dalla barra", L"从菜单栏隐藏"},
     {L"Transparência do vidro", L"Glass Transparency", L"Transparencia del vidrio", L"Transparence du verre", L"Glastransparenz", L"Trasparenza del vetro", L"玻璃透明度"},
-    {L"Não foi possível baixar %s", L"Couldn’t download %s", L"No se pudo descargar %s", L"Impossible de télécharger %s", L"%s konnte nicht heruntergeladen werden", L"Impossibile scaricare %s", L"无法下载 %s"},
     {L"Arquivo não encontrado: %s", L"File not found: %s", L"Archivo no encontrado: %s", L"Fichier introuvable : %s", L"Datei nicht gefunden: %s", L"File non trovato: %s", L"找不到文件: %s"},
     {L"Não foi possível abrir %s", L"Couldn’t open %s", L"No se pudo abrir %s", L"Impossible d’ouvrir %s", L"%s konnte nicht geöffnet werden", L"Impossibile aprire %s", L"无法打开 %s"},
     {L"%s é grande demais", L"%s is too large", L"%s es demasiado grande", L"%s est trop volumineux", L"%s ist zu groß", L"%s è troppo grande", L"%s 太大"},
@@ -22906,7 +22813,6 @@ const UiTr kUiTr[] = {
     {L"Configurações de Foco...", L"Focus Settings...", L"Configuración de concentración...", L"Paramètres de concentration...", L"Fokuseinstellungen...", L"Impostazioni Full immersion...", L"专注设置..."},
     {L"Microfone em uso", L"Microphone in Use", L"Micrófono en uso", L"Micro en cours d’utilisation", L"Mikrofon wird verwendet", L"Microfono in uso", L"麦克风使用中"},
     {L"Câmera em uso", L"Camera in Use", L"Cámara en uso", L"Caméra en cours d’utilisation", L"Kamera wird verwendet", L"Fotocamera in uso", L"摄像头使用中"},
-    {L"Configurações de privacidade...", L"Privacy Settings...", L"Configuración de privacidad...", L"Paramètres de confidentialité...", L"Datenschutzeinstellungen...", L"Impostazioni privacy...", L"隐私设置..."},
     {L"Não Perturbe", L"Do Not Disturb", L"No molestar", L"Ne pas déranger", L"Nicht stören", L"Non disturbare", L"勿扰"},
     {L"Ativado", L"On", L"Activado", L"Activé", L"Ein", L"Attivato", L"已开启"},
     {L"Desativado", L"Off", L"Desactivado", L"Désactivé", L"Aus", L"Disattivato", L"已关闭"},
@@ -22922,10 +22828,7 @@ const UiTr kUiTr[] = {
     {L"Removido", L"Removed", L"Quitado", L"Retiré", L"Entfernt", L"Rimosso", L"已移除"},
     {L"Dispositivo USB", L"USB device", L"Dispositivo USB", L"Périphérique USB", L"USB-Gerät", L"Dispositivo USB", L"USB 设备"},
     {L"Conectado por USB", L"Connected via USB", L"Conectado por USB", L"Connecté en USB", L"Per USB verbunden", L"Connesso via USB", L"已通过 USB 连接"},
-    {L"1 arquivo copiado", L"1 file copied", L"1 archivo copiado", L"1 fichier copié", L"1 Datei kopiert", L"1 file copiato", L"已复制 1 个文件"},
-    {L"%s arquivos copiados", L"%s files copied", L"%s archivos copiados", L"%s fichiers copiés", L"%s Dateien kopiert", L"%s file copiati", L"已复制 %s 个文件"},
     {L"Copiado", L"Copied", L"Copiado", L"Copié", L"Kopiert", L"Copiato", L"已复制"},
-    {L"Imagem copiada", L"Image copied", L"Imagen copiada", L"Image copiée", L"Bild kopiert", L"Immagine copiata", L"已复制图片"},
     {L"Salva · clique para abrir", L"Saved · click to open", L"Guardada · haz clic para abrir", L"Enregistrée · cliquez pour ouvrir", L"Gespeichert · zum Öffnen klicken", L"Salvato · fai clic per aprire", L"已保存 · 点击打开"},
     {L"Download concluído", L"Download complete", L"Descarga completada", L"Téléchargement terminé", L"Download abgeschlossen", L"Download completato", L"下载完成"},
     {L"Nenhuma notificação", L"No notifications", L"No hay notificaciones", L"Aucune notification", L"Keine Mitteilungen", L"Nessuna notifica", L"没有通知"},
@@ -22971,7 +22874,6 @@ const UiTr kUiTr[] = {
     {L"Calendário", L"Calendar", L"Calendario", L"Calendrier", L"Kalender", L"Calendario", L"日历"},
     {L"Importar arquivo .ics", L"Import .ics file", L"Importar archivo .ics", L"Importer un fichier .ics", L".ics-Datei importieren", L"Importa file .ics", L"导入 .ics 文件"},
     {L"Remover os calendários importados", L"Remove imported calendars", L"Quitar los calendarios importados", L"Supprimer les calendriers importés", L"Importierte Kalender entfernen", L"Rimuovi i calendari importati", L"移除已导入的日历"},
-    {L"Links .ics (como o endereço secreto do Google Agenda) ficam nas configurações do mod no Windhawk.", L".ics links (like Google Calendar’s secret address) go in the mod’s settings in Windhawk.", L"Los enlaces .ics (como la dirección secreta de Google Calendar) van en la configuración del mod en Windhawk.", L"Les liens .ics (comme l’adresse secrète de Google Agenda) se placent dans les paramètres du mod dans Windhawk.", L".ics-Links (wie die geheime Adresse von Google Kalender) gehören in die Mod-Einstellungen in Windhawk.", L"I link .ics (come l’indirizzo segreto di Google Calendar) vanno nelle impostazioni della mod in Windhawk.", L".ics 链接 (如 Google 日历的私密地址) 请填写在 Windhawk 中此模组的设置里。"},
     {L"Calendário importado", L"Calendar imported", L"Calendario importado", L"Calendrier importé", L"Kalender importiert", L"Calendario importato", L"已导入日历"},
     {L"%s calendários importados", L"%s calendars imported", L"%s calendarios importados", L"%s calendriers importés", L"%s Kalender importiert", L"%s calendari importati", L"已导入 %s 个日历"},
     {L"Calendários importados removidos", L"Imported calendars removed", L"Calendarios importados quitados", L"Calendriers importés supprimés", L"Importierte Kalender entfernt", L"Calendari importati rimossi", L"已移除导入的日历"},
