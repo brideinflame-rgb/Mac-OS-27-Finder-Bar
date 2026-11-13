@@ -23,6 +23,7 @@ Um mod do [Windhawk](https://windhawk.net) que coloca uma barra de menus no esti
 - **Vidro ao vivo**: a barra e os painéis desfocam o que está atrás deles em tempo real, com um vidro líquido experimental com refração nas bordas (ligado por padrão)
 - **Vidro líquido personalizado** (o tema do Siri Plus Launchpad): a sua cor no topo, sumindo em vidro limpo embaixo, com uma linha fina de luz na borda de baixo. Vale para os painéis, para o fundo da barra ou para os dois; a cor, a força e até onde a cor desce ficam em Ajustes da Barra de Menus
 - **Barra e menus**: barra transparente (padrão), de vidro desfocado ou de vidro líquido, opaca com o app maximizado; um único ajuste de vidro para a Central, os menus, os painéis e as pílulas; tema claro, escuro ou automático, nove cores de seleção, fonte e tamanhos; some com apps em tela cheia, ocultar automaticamente opcional, todos os monitores
+- **Discos** (opcional): o menu lista os discos locais e removíveis com uma barra de uso e abre cada um no Explorador; texto e ícones da barra em branco, preto ou automático; todos os ícones da barra num tamanho só, que cresce com o ajuste de tamanho dos ícones.
 - **Janela de ajustes**: logo → **Ajustes da Barra de Menus…** abre os ajustes numa janela no estilo do macOS, com busca, aplicados na hora, sem reiniciar a barra
 - **O seu idioma**: segue o idioma do Windows, ou escolha um (inglês, português, espanhol, francês, alemão, italiano e chinês simplificado)
 
@@ -43,7 +44,7 @@ Os ajustes ficam na janela do próprio mod: menu do logo → **Ajustes da Barra 
 
 Alguns blocos da Central de Controle e itens de menu mudam ajustes reais do Windows, os mesmos que as configurações rápidas do próprio Windows mudam, e eles continuam mudados depois que o mod é desligado: modo escuro (tema dos apps e do sistema, os dois com o mesmo valor), luz noturna, modo e plano de energia (um modo de energia também passa o plano para Equilibrado), economia de energia, Não Perturbe, brilho, saída de áudio padrão, volume e mudo, microfone silenciado, rádios de Wi-Fi e Bluetooth, rede Wi-Fi e modo de projeção. Nada muda sem você clicar no bloco ou item.
 
-Enquanto o indicador de volume e brilho da barra está ligado, a pílula de volume do próprio Windows fica escondida, para aparecer só uma (a antiga é minimizada; a nova, que as teclas de volume mostram nas versões recentes do Windows 11, também sai da tela). Desligar o indicador ou o mod a traz de volta; se o processo da barra travar e fechar, ela volta quando o Explorer reiniciar.
+Enquanto o indicador de volume e brilho da barra está ligado, a pílula de volume do próprio Windows fica escondida, para aparecer só uma (a antiga é minimizada; a nova, que as teclas de volume mostram nas versões recentes do Windows 11, é encoberta pela parte do mod que roda no Explorer, ou sai da tela se isso falhar). Ela ainda pode aparecer uma vez, na primeira mudança de volume depois que o Explorer abre. Desligar o indicador ou o mod a traz de volta; se o processo da barra travar e fechar, ela volta quando o Explorer reiniciar.
 
 ## Uso da rede
 

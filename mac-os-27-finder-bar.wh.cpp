@@ -78,6 +78,9 @@ Turn on **Windows notifications** in logo → **Menu Bar Settings…** → **Not
 - **Live glass**: panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels and pills, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
 - **One glass for everything**: the Control Center, menus, panels and pills share the same glass settings (style, tint, liquid glass, refraction, blur, live)
+- Bar text and icons in white, black or automatic (following the Windows theme)
+- **Disks** (optional): its menu lists every local and removable disk with a usage bar and opens it in Explorer
+- Bar icons share one size: each icon is measured and scaled to the same height, and they all grow together with the icon size setting
 - Light, dark or automatic theme, nine selection colors for the bar and menus, font, font size, icon size and bar height
 - Hides with full-screen apps, can hide automatically until the mouse touches the top, and shows on every monitor (each optional)
 
@@ -97,7 +100,7 @@ Some Control Center tiles and menu items change real Windows settings, the same 
 
 Nothing is changed unless you click the matching tile or item.
 
-While the bar's volume and brightness indicator is on, Windows' own volume pill is kept hidden so only one shows (the older pill is minimized; the newer one, which the keyboard volume keys show on recent Windows 11 versions, is also moved off the screen). Turning the indicator or the mod off brings it back; if the bar's process ever crashes, it comes back when Explorer restarts.
+While the bar's volume and brightness indicator is on, Windows' own volume pill is kept hidden so only one shows (the older pill is minimized; the newer one, which the keyboard volume keys show on recent Windows 11 versions, is cloaked by the mod's part inside Explorer, or moved off the screen if that fails). It may still show once, the first time the volume changes after Explorer starts. Turning the indicator or the mod off brings it back; if the bar's process ever crashes, it comes back when Explorer restarts.
 
 ## Network use
 
@@ -329,6 +332,7 @@ struct Settings {
     bool showControlCenter, ccFullPill, ccRounded;
     bool showWeather;
     bool showNowPlaying, showFocus, showSearch, showPrivacy, menuOverflow, islandPills, kbdNav;
+    bool showDisks;  // discos na barra, com quanto está cheio
     bool usbPills, downloadPills, clipPills, shotPills;
     bool islFocus, islBattery, islBluetooth, islAudio, islHistory, winNotifs, islHistNotices, islCaps;
     bool winNotifsOnly;  // só a barra mostra as notificações (faixas do Windows desligadas)
@@ -504,6 +508,7 @@ static const UiDefault kUiDefaults[] = {
     {L"showNowPlaying", L"1"},
     {L"showFocus", L"1"},
     {L"showSearch", L"1"},
+    {L"showDisks", L"0"},
     {L"searchTarget", L"windows"},
     {L"showPrivacy", L"1"},
     {L"menuOverflow", L"1"},
@@ -713,7 +718,10 @@ static void LoadSettings() {
         int ic = OvrInt(L"iconScale");
         s.iconScale = (ic < 50 || ic > 200) ? 1.0f : ic / 100.0f;
     }
-    std::wstring theme = ReadStr(L"theme");
+    // Cor do texto e dos ícones da barra: a escolhida nos Ajustes da barra, senão
+    // a das configurações do mod.
+    std::wstring theme;
+    if (!UiStored(L"theme", theme)) theme = ReadStr(L"theme");
     s.theme = theme == L"dark" ? 1 : theme == L"light" ? 2 : 0;
     {
         std::wstring pt = ReadStr(L"panelLook");
@@ -745,6 +753,7 @@ static void LoadSettings() {
     s.showNowPlaying = OvrInt(L"showNowPlaying") != 0;
     s.showFocus = OvrInt(L"showFocus") != 0;
     s.showSearch = OvrInt(L"showSearch") != 0;
+    s.showDisks = OvrInt(L"showDisks") != 0;
     s.showPrivacy = OvrInt(L"showPrivacy") != 0;
     s.menuOverflow = OvrInt(L"menuOverflow") != 0;
     s.islandPills = OvrInt(L"islandPills") != 0;
@@ -844,9 +853,9 @@ static const wchar_t kOwnerClass[] = L"WhFinderTopBarOwner";
 
 enum ItemKind {
     K_LOGO, K_APP, K_MENU, K_DISPLAY, K_KBD, K_BATTERY, K_NET, K_BT, K_VOL, K_CLOCK, K_TRAY, K_CC, K_WEATHER,
-    K_PRIV, K_NOW, K_FOCUS, K_SEARCH, K_MORE, K_NOTIF,
+    K_PRIV, K_NOW, K_FOCUS, K_SEARCH, K_MORE, K_NOTIF, K_DISK,
 };
-static_assert(K_NOTIF < 24, "Bar::bounce tem 24 posições");
+static_assert(K_DISK < 24, "Bar::bounce tem 24 posições");
 
 struct Item {
     ItemKind kind;
@@ -2462,6 +2471,7 @@ enum {
     ID_PRIV_MICMUTE = 1950, ID_PRIV_INFO,
     ID_NOW_PREV = 1101 + 40, ID_NOW_PLAY, ID_NOW_NEXT, ID_FOCUS_OFF, ID_FOCUS_SETTINGS, ID_PRIV_SETTINGS,
     ID_HIST_CLEAR = 1150, ID_HIST_BASE = 1151, ID_HIST_WINCENTER = 1190,
+    ID_DISK_BASE = 1800, ID_DISK_EXPLORER = 1830, ID_DISK_SETTINGS,
 };
 
 static void AddItem(HMENU m, UINT id, const std::wstring& text, bool checked = false,
@@ -3286,6 +3296,93 @@ static HMENU BuildBatteryMenu() {
     return m;
 }
 
+// ---- Discos: os locais e os removíveis, com o espaço usado ----
+struct DiskInfo {
+    wchar_t letter;
+    std::wstring label;
+    ULONGLONG total, freeB;
+    bool removable;
+};
+static std::vector<DiskInfo> g_disks;
+static int g_diskBarPct = -1;  // quanto o disco do sistema está cheio (na barra)
+static ULONGLONG g_diskBarTick = 0;
+
+static bool DiskRead(wchar_t letter, DiskInfo& d) {
+    wchar_t root[4] = {letter, L':', L'\\', 0};
+    UINT type = GetDriveTypeW(root);
+    if (type != DRIVE_FIXED && type != DRIVE_REMOVABLE) return false;
+    // Leitor de cartão vazio: falha quieta, sem a caixa "insira um disco".
+    DWORD oldMode = 0;
+    SetThreadErrorMode(SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, &oldMode);
+    ULARGE_INTEGER avail{}, total{}, freeB{};
+    bool ok = GetDiskFreeSpaceExW(root, &avail, &total, &freeB) && total.QuadPart > 0;
+    wchar_t name[MAX_PATH] = L"";
+    if (ok) GetVolumeInformationW(root, name, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0);
+    SetThreadErrorMode(oldMode, nullptr);
+    if (!ok) return false;
+    d = {letter, name, total.QuadPart, freeB.QuadPart, type == DRIVE_REMOVABLE};
+    return true;
+}
+static int DiskPct(const DiskInfo& d) {
+    return d.total ? (int)std::lround((double)(d.total - d.freeB) * 100.0 / (double)d.total) : 0;
+}
+static wchar_t SystemDriveLetter() {
+    wchar_t win[MAX_PATH] = L"C:\\";
+    GetWindowsDirectoryW(win, MAX_PATH);
+    return (wchar_t)towupper(win[0]);
+}
+// Só o disco do sistema, para a barrinha (no máximo a cada 30 s).
+static void DiskBarRefresh(bool force = false) {
+    ULONGLONG now = GetTickCount64();
+    if (!force && g_diskBarTick && now - g_diskBarTick < 30000) return;
+    g_diskBarTick = now;
+    DiskInfo d;
+    g_diskBarPct = DiskRead(SystemDriveLetter(), d) ? DiskPct(d) : -1;
+}
+static void DisksRefresh() {
+    g_disks.clear();
+    DWORD mask = GetLogicalDrives();
+    for (int i = 0; i < 26; i++) {
+        DiskInfo d;
+        if ((mask & (1u << i)) && DiskRead((wchar_t)(L'A' + i), d)) g_disks.push_back(d);
+    }
+    DiskBarRefresh(true);
+}
+// "476 GB", "1,8 TB" (com a vírgula ou o ponto do idioma).
+static std::wstring DiskSize(ULONGLONG b) {
+    double gb = (double)b / 1e9;
+    wchar_t buf[32];
+    if (gb >= 1000) swprintf(buf, 32, L"%.1f TB", gb / 1000);
+    else if (gb >= 100) swprintf(buf, 32, L"%.0f GB", gb);
+    else swprintf(buf, 32, L"%.1f GB", gb);
+    wchar_t dec[8] = L".";
+    GetLocaleInfoEx(UiLocale(), LOCALE_SDECIMAL, dec, 8);
+    std::wstring out = buf;
+    if (dec[0] && dec[0] != L'.')
+        for (wchar_t& c : out)
+            if (c == L'.') c = dec[0];
+    return out;
+}
+static HMENU BuildDiskMenu() {
+    HMENU m = CreatePopupMenu();
+    DisksRefresh();
+    AddHeader(m, L"Discos");
+    for (const DiskInfo& d : g_disks) {
+        std::wstring name = d.label.empty() ? std::wstring(T(d.removable ? L"Unidade removível" : L"Disco local")) : d.label;
+        name += L" (" + std::wstring(1, d.letter) + L":)";
+        std::wstring detail = TF(L"%s livres de %s", {DiskSize(d.freeB), DiskSize(d.total)});
+        // \x06 no texto da direita: a barra de uso embaixo da linha (porcentagem e o texto).
+        std::wstring glyph(1, d.removable ? (wchar_t)0xE88E : (wchar_t)0xEDA2);
+        AddItem(m, ID_DISK_BASE + (UINT)(d.letter - L'A'),
+                glyph + L" " + name + L"\t\x06" + std::to_wstring(DiskPct(d)) + L"\x1F" + detail);
+    }
+    if (g_disks.empty()) AddHeader(m, L"Nenhum disco encontrado");
+    AddSep(m);
+    AddItem(m, ID_DISK_EXPLORER, L"Abrir Este Computador");
+    AddItem(m, ID_DISK_SETTINGS, L"Armazenamento...");
+    return m;
+}
+
 // Estado dos rádios (definidos com a central; -1 desconhecido).
 static int RadioStateWifi();
 static int RadioStateBt();
@@ -3550,6 +3647,12 @@ static void RunCommand(const TopMenu* tm, UINT cmd) {
         UiaInvoke(g_active.hwnd, g_active.pid, g_uiaPaths[cmd - ID_UIA]);
         return;
     }
+    if (cmd >= ID_DISK_BASE && cmd < ID_DISK_BASE + 26) {
+        // Abre o disco no Explorador.
+        wchar_t root[4] = {(wchar_t)(L'A' + (cmd - ID_DISK_BASE)), L':', L'\\', 0};
+        ShellExecuteW(nullptr, L"open", root, nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
     if (cmd >= ID_GO && cmd < ID_GO + ARRAYSIZE(kGoMenu)) {
         if (kGoMenu[cmd - ID_GO].target) OpenUri(kGoMenu[cmd - ID_GO].target);
         return;
@@ -3699,6 +3802,8 @@ static void RunCommand(const TopMenu* tm, UINT cmd) {
         }
 
         case ID_BATT_SETTINGS: OpenUri(L"ms-settings:batterysaver"); break;
+        case ID_DISK_EXPLORER: OpenUri(L"explorer.exe", L"shell:MyComputerFolder"); break;
+        case ID_DISK_SETTINGS: OpenUri(L"ms-settings:storagesense"); break;
         case ID_POWER_MODE: OpenUri(L"ms-settings:powersleep"); break;
 
         case ID_NET_SETTINGS: OpenUri(L"ms-settings:network"); break;
@@ -3919,12 +4024,31 @@ static HANDLE g_hostStop = nullptr, g_hostWake = nullptr, g_hostThread = nullptr
 static volatile LONG g_hostHookBusy = 0;
 static HWND g_trayClient = nullptr;  // (no processo da barra)
 
+// Pedido da barra para esconder (ou mostrar de novo) a pílula de volume nova do
+// Windows. Ela é uma janela do Explorer, e só o processo dono pode encobri-la
+// (DWMWA_CLOAK): encoberta, ela nem chega a piscar quando o Windows a mostra. Só
+// vale para a janela da pílula: deste processo, da classe dela e sem título.
+static const wchar_t kCloakPillMsg[] = L"WhFinderTopBar.CloakVolumePill";
+static HWND g_hostCloaked = nullptr;
+static void HostCloakPill(HWND x, bool on) {
+    DWORD pid = 0;
+    wchar_t cls[64] = L"";
+    if (!x || !IsWindow(x) || !GetWindowThreadProcessId(x, &pid) || pid != GetCurrentProcessId()) return;
+    if (!GetClassNameW(x, cls, 64) || wcscmp(cls, L"XamlExplorerHostIslandWindow") != 0 || GetWindowTextLengthW(x) > 0)
+        return;
+    BOOL v = on ? TRUE : FALSE;
+    if (SUCCEEDED(DwmSetWindowAttribute(x, 13 /*DWMWA_CLOAK*/, &v, sizeof(v)))) g_hostCloaked = on ? x : nullptr;
+}
+
 // Roda na thread da barra de tarefas (no shell): só copia os dados e acorda a
 // thread que os encaminha.
 static LRESULT CALLBACK TrayCallWndProc(int code, WPARAM wp, LPARAM lp) {
     InterlockedIncrement(&g_hostHookBusy);
+    static const UINT cloakMsg = RegisterWindowMessageW(kCloakPillMsg);
     if (code == HC_ACTION) {
         auto* c = reinterpret_cast<CWPSTRUCT*>(lp);
+        if (c && cloakMsg && c->message == cloakMsg && c->hwnd == g_trayWnd)
+            HostCloakPill((HWND)(ULONG_PTR)(DWORD)c->wParam, c->lParam != 0);
         if (c && c->message == WM_COPYDATA && c->hwnd == g_trayWnd) {
             auto* cds = reinterpret_cast<COPYDATASTRUCT*>(c->lParam);
             if (cds && cds->dwData == 1 && cds->lpData && cds->cbData >= 8 &&
@@ -4005,6 +4129,12 @@ static void HostUnhook() {
         g_trayHook = nullptr;
     }
     while (InterlockedCompareExchange(&g_hostHookBusy, 0, 0) > 0) Sleep(10);
+    // A pílula de volume do Windows não fica encoberta depois que o mod sai.
+    if (g_hostCloaked && IsWindow(g_hostCloaked)) {
+        BOOL v = FALSE;
+        DwmSetWindowAttribute(g_hostCloaked, 13 /*DWMWA_CLOAK*/, &v, sizeof(v));
+    }
+    g_hostCloaked = nullptr;
 }
 static void HostStop() {
     HostUnhook();  // primeiro o gancho: depois disto nada do mod roda na thread da barra de tarefas
@@ -8001,6 +8131,7 @@ struct GmItem {
     bool isSlider = false;       // slider segmentado (volume/brilho)
     bool shortcutIcons = false;  // o texto da direita são glifos (cadeado, sinal)
     bool isSearch = false;       // campo de busca (menu Ajuda); o texto é a busca
+    int usage = -1;              // barra de uso embaixo da linha (discos), 0–100
 };
 
 // Vidro (composição) de uma janela qualquer.
@@ -8337,6 +8468,12 @@ static void GmReadItems(HMENU m, std::vector<GmItem>& out) {
             it.badge = it.shortcut.substr(1);
             it.shortcut.clear();
         }
+        if (!it.shortcut.empty() && it.shortcut[0] == L'\x06') {
+            // "\x06<0-100>\x1F<texto>": barra de uso embaixo e o texto à direita.
+            size_t sep = it.shortcut.find(L'\x1F');
+            it.usage = std::clamp(_wtoi(it.shortcut.c_str() + 1), 0, 100);
+            it.shortcut = sep == std::wstring::npos ? std::wstring() : it.shortcut.substr(sep + 1);
+        }
         // Tira os "&" de atalho de letra ("&&" vira "&").
         for (size_t k = 0; k < label.size(); k++) {
             if (label[k] == L'&') {
@@ -8408,7 +8545,7 @@ static float GmRadius() { return 13 * g_gmS; }    // cantos menos dramáticos (m
 
 static float GmItemHeight(const GmItem& it) {
     if (it.sep) return GmSepH();
-    if (it.icon && !it.header) return 34 * g_gmS * GmFz();
+    if (it.icon && !it.header) return (it.usage >= 0 ? 46 : 34) * g_gmS * GmFz();
     if (it.header) return GmHeaderH();
     if (it.isSlider) return GmSliderH();
     if (it.isSwitch) return GmSwitchH();
@@ -8653,6 +8790,12 @@ static void GmRender(GmLevel* lv) {
                           g_light ? D2D1::ColorF(0, 0, 0, 0.06f) : D2D1::ColorF(1, 1, 1, 0.10f), s);
             }
 
+            // Linha com barra de uso: o conteúdo sobe e a barra fica embaixo.
+            D2D1_RECT_F full = r;
+            if (it.usage >= 0) {
+                r.bottom -= 11 * s;
+                cy = (r.top + r.bottom) / 2;
+            }
             bool hotBlue = selColored;  // texto contrastante só na seleção colorida
             D2D1_COLOR_F onSel = selDark ? D2D1::ColorF(0, 0, 0, 0.88f) : D2D1::ColorF(1, 1, 1, 1);
             D2D1_COLOR_F c = it.header || it.disabled ? dim : hotBlue ? onSel : fg;
@@ -8775,6 +8918,18 @@ static void GmRender(GmLevel* lv) {
             rt->DrawText(it.text.c_str(), (UINT32)it.text.size(), f,
                          D2D1::RectF(textL, r.top, std::max(textL + 10 * s, right), r.bottom), br,
                          D2D1_DRAW_TEXT_OPTIONS_CLIP);
+            if (it.usage >= 0) {
+                float bh = 5 * s, by = full.bottom - 12 * s;
+                D2D1_RECT_F tr = D2D1::RectF(textL, by, full.right - 12 * s, by + bh);
+                D2D1_COLOR_F tc = c;
+                tc.a *= 0.18f;
+                br->SetColor(tc);
+                rt->FillRoundedRectangle(D2D1::RoundedRect(tr, bh / 2, bh / 2), br);
+                D2D1_RECT_F fr = tr;
+                fr.right = tr.left + (tr.right - tr.left) * it.usage / 100.0f;
+                br->SetColor(it.usage >= 90 ? D2D1::ColorF(1.0f, 0.27f, 0.23f, 1) : hotBlue ? onSel : accent);
+                rt->FillRoundedRectangle(D2D1::RoundedRect(fr, bh / 2, bh / 2), br);
+            }
         }
         if (itemAnim) PopAnim(rt, base);
     }
@@ -9957,13 +10112,15 @@ static LRESULT CALLBACK OsdWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 //    minimizada. O Windows só cria essa janela na primeira vez que o volume muda,
 //    então ela pode aparecer uma vez antes de ser escondida;
 //  - a nova (24H2 em diante, em XAML, a das teclas de volume): uma
-//    XamlExplorerHostIslandWindow do Explorer. Ela fica transparente para o mouse,
-//    fora da tela e minimizada (é o que fazem o HideVolumeOSD e o FluentFlyout);
-//    minimizada só, o Windows a mostra de novo.
+//    XamlExplorerHostIslandWindow do Explorer. A parte do mod que roda no Explorer
+//    a encobre (DWMWA_CLOAK), e aí ela não pisca mais. Se isso falhar, ela fica em
+//    camadas e sem conteúdo, transparente para o mouse e fora da tela. Nunca é
+//    minimizada: o Windows a restaura com a animação de janela, saindo do canto.
 // A visualização das miniaturas da barra de tarefas, o Snap Assist, o Alt+Tab e a
 // Visão de Tarefas usam a mesma classe. Por isso a nova só é escolhida quando
 // aparece logo depois de uma mudança de volume, sem título e pequena (bem menor
-// que o monitor); e ao devolver, volta o estilo, a posição e a visibilidade de antes.
+// que o monitor); e ao devolver, volta o estilo e a visibilidade de antes, no centro
+// acima da barra de tarefas.
 static HWND g_winOsdHidden = nullptr;
 static HWND g_winOsdIsland = nullptr;  // a nova, escondida
 static LONG_PTR g_winOsdIslandEx = 0;  // o estilo dela antes de esconder
@@ -10014,13 +10171,44 @@ static void WinOsdScanStop() {
 // Devolve a nova como estava: o estilo, a posição e a visibilidade de antes.
 // O Explorer deixa essa janela na tela e só some com o conteúdo dela; escondida,
 // ele não a mostra de novo e a pílula do Windows não volta.
+// Pede ao Explorer (à parte do mod que roda nele) para encobrir ou mostrar a pílula.
+static bool g_winOsdIslandCloaked = false;
+static bool WinOsdCloak(HWND x, bool on) {
+    HWND tray = FindWindowW(L"Shell_TrayWnd", nullptr);
+    DWORD pid = 0;
+    if (!tray || !GetWindowThreadProcessId(tray, &pid) || pid != ShellPid()) return false;
+    static const UINT msg = RegisterWindowMessageW(kCloakPillMsg);
+    DWORD_PTR r = 0;
+    if (!msg || !SendMessageTimeoutW(tray, msg, (WPARAM)(ULONG_PTR)x, on ? 1 : 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 300, &r))
+        return false;
+    return IsCloaked(x) == on;
+}
 static void WinOsdIslandRestore() {
-    if (g_winOsdIsland && IsWindow(g_winOsdIsland) && ShellAnswers(g_winOsdIsland)) {
-        SetWindowLongPtrW(g_winOsdIsland, GWL_EXSTYLE, g_winOsdIslandEx);
-        WINDOWPLACEMENT wp = g_winOsdIslandPlace;
-        wp.showCmd = g_winOsdIslandShown ? SW_SHOWNOACTIVATE : SW_HIDE;
-        wp.flags = 0;
-        SetWindowPlacement(g_winOsdIsland, &wp);
+    HWND x = g_winOsdIsland;
+    if (g_winOsdIslandCloaked) {
+        // Encoberta: só volta a aparecer, no mesmo lugar de sempre.
+        if (x && IsWindow(x)) WinOsdCloak(x, false);
+        g_winOsdIslandCloaked = false;
+        g_winOsdIsland = nullptr;
+        return;
+    }
+    if (x && IsWindow(x) && ShellAnswers(x)) {
+        SetWindowLongPtrW(x, GWL_EXSTYLE, g_winOsdIslandEx);
+        // De volta ao lugar de costume da pílula: no centro, logo acima da barra de
+        // tarefas, no monitor principal (com o tamanho que ela tinha).
+        const RECT& n = g_winOsdIslandPlace.rcNormalPosition;
+        RECT wr{};
+        GetWindowRect(x, &wr);
+        int w = wr.right - wr.left, h = wr.bottom - wr.top;
+        if (w <= 0 || h <= 0) w = n.right - n.left, h = n.bottom - n.top;
+        MONITORINFO mi{sizeof(mi)};
+        if (GetMonitorInfoW(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+            UINT dpi = GetDpiForWindow(x);
+            int gap = MulDiv(12, dpi ? dpi : 96, 96);
+            int px = (mi.rcWork.left + mi.rcWork.right - w) / 2, py = mi.rcWork.bottom - gap - h;
+            SetWindowPos(x, nullptr, px, py, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
+        }
+        ShowWindowAsync(x, g_winOsdIslandShown ? SW_SHOWNOACTIVATE : SW_HIDE);
     }
     g_winOsdIsland = nullptr;
 }
@@ -10037,12 +10225,19 @@ static void WinOsdIslandHide(HWND x) {
         GetWindowRect(x, &r);
         Wh_Log(L"Hiding Windows' XAML volume pill %p (%dx%d)", x, (int)(r.right - r.left), (int)(r.bottom - r.top));
     }
+    // O melhor: encoberta pelo próprio Explorer (não pisca mais). Se não der, sai da tela.
+    if (WinOsdCloak(x, true)) {
+        g_winOsdIslandCloaked = true;
+        return;
+    }
     SetWindowLongPtrW(x, GWL_EXSTYLE, g_winOsdIslandEx | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+    // Sem minimizar: minimizada, o Windows a restaura com a animação de janela
+    // (ela "sai voando" do canto). Em camadas e sem conteúdo ela já não aparece;
+    // fora da tela, também não pega clique.
     SetWindowPos(x, nullptr, -99999, -99999, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
-    ShowWindowAsync(x, SW_SHOWMINNOACTIVE);
 }
-// Depois de uma mudança de volume, procura a nova por até 700 ms (ela aparece
-// quase junto com a mudança).
+// Depois de uma mudança de volume, por 1,5 s: acha a nova (ela aparece quase junto
+// com a mudança) e, se o Windows a puser de volta na tela, a tira de novo.
 // Nenhuma serviu: anota uma vez no log as que existem, para saber o porquê.
 static void WinOsdScanMiss() {
     static bool logged = false;
@@ -10059,20 +10254,29 @@ static void WinOsdScanMiss() {
                (int)IsIconic(h), (int)IsCloaked(h), (int)(r.right - r.left), (int)(r.bottom - r.top));
     }
 }
+// A já escondida voltou para a tela? (o Explorer a põe no lugar ao mostrar o volume)
+static bool WinOsdIslandOnScreen() {
+    HWND x = g_winOsdIsland;
+    if (!x || !IsWindow(x) || !IsWindowVisible(x) || IsCloaked(x)) return false;
+    RECT r{};
+    return GetWindowRect(x, &r) && MonitorFromRect(&r, MONITOR_DEFAULTTONULL) != nullptr;
+}
 static void CALLBACK WinOsdScanTick(HWND, UINT, UINT_PTR, DWORD) {
     if (!g_settings.showOsd || GetTickCount64() > g_winOsdScanUntil) {
         if (g_settings.showOsd) WinOsdScanMiss();
         WinOsdScanStop();
         return;
     }
-    if (HWND x = FindWinOsdIsland()) {
-        WinOsdIslandHide(x);
-        WinOsdScanStop();
+    // Enquanto o Windows mostra o volume, ela é mantida fora da tela.
+    if (WinOsdIslandOnScreen()) {
+        WinOsdIslandHide(g_winOsdIsland);
+    } else if (!g_winOsdIsland || !IsWindow(g_winOsdIsland)) {
+        if (HWND x = FindWinOsdIsland()) WinOsdIslandHide(x);
     }
 }
 static void WinOsdScan() {
     if (!g_settings.showOsd) return;
-    g_winOsdScanUntil = GetTickCount64() + 700;
+    g_winOsdScanUntil = GetTickCount64() + 1500;
     WinOsdScanTick(nullptr, 0, 0, 0);
     if (g_winOsdScanUntil && !g_winOsdScanTimer && GetTickCount64() <= g_winOsdScanUntil)
         g_winOsdScanTimer = SetTimer(nullptr, 0, 40, WinOsdScanTick);
@@ -11823,7 +12027,7 @@ enum BsVal {
     BV_BATTPCT, BV_AUTOHIDE, BV_HIDEFS, BV_SOLIDMAX, BV_ALLMON, BV_FLYOUTS, BV_OSD, BV_DIM,
     BV_G_TRANSP, BV_G_CLEAR, BV_G_LIQUID, BV_G_REFRACT, BV_G_BLUR, BV_G_LIVE, BV_WEATHER, BV_BARSTYLE, BV_HEIGHT, BV_FONT, BV_ICONS, BV_BSSTYLE, BV_BSTRANSP, BV_SELBAR, BV_SELMENU, BV_UPDATES,
     BV_G_TINT, BV_SEARCHTGT, BV_LANG, BV_NPBAR, BV_ICSADD, BV_ICSCLEAR,
-    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE, BV_NTFSHAPE,
+    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE, BV_NTFSHAPE, BV_TEXTCOLOR, BV_DISK,
 };
 struct BsRowDef {
     int kind;
@@ -11850,11 +12054,13 @@ static const BsRowDef kBsRows[] = {
     {BR_ITEM, BV_NOW, L"Tocando agora", 0xEC4F, 0xFF375F},
     {BR_ITEM, BV_FOCUS, L"Foco (quando ativo)", 0xE708, 0x5E5CE6},
     {BR_ITEM, BV_SEARCH, L"Busca", 0xE721, 0x8E8E93},
+    {BR_ITEM, BV_DISK, L"Discos", 0xEDA2, 0x8E8E93, L"Clique para ver os discos e quanto cada um está cheio"},
     {BR_CHOICE, BV_SEARCHTGT, L"A busca abre", 0, 0, L"Siri Plus: a janela padrão dele, no estilo Spotlight"},
     {BR_ITEM, BV_PRIV, L"Privacidade (microfone e câmera)", 0xE720, 0xFF9F0A, L"Laranja e verde quando um app usa o microfone ou a câmera; clique para ver quem está usando e silenciar o microfone"},
     {BR_HEADER, BV_NONE, L"Barra", 0xE771, 0x0A84FF, L"Fundo, cores de seleção, tamanho e quando a barra aparece"},
     {BR_CHOICE, BV_LANG, L"Idioma", 0, 0, L"Automático segue o idioma do Windows"},
     {BR_CHOICE, BV_BARSTYLE, L"Fundo", 0, 0},
+    {BR_CHOICE, BV_TEXTCOLOR, L"Cor do texto e dos ícones", 0, 0, L"Automático segue o tema do Windows"},
     {BR_COLORS, BV_SELBAR, L"Seleção na barra", 0, 0},
     {BR_COLORS, BV_SELMENU, L"Seleção nos menus", 0, 0},
     {BR_GROUP, BV_NONE, L"Tamanho", 0, 0},
@@ -11965,6 +12171,7 @@ static const BsBoolKey kBsKeys[] = {
     {BV_NOW, L"showNowPlaying", &Settings::showNowPlaying},
     {BV_FOCUS, L"showFocus", &Settings::showFocus},
     {BV_SEARCH, L"showSearch", &Settings::showSearch},
+    {BV_DISK, L"showDisks", &Settings::showDisks},
     {BV_PRIV, L"showPrivacy", &Settings::showPrivacy},
     {BV_MORE, L"menuOverflow", &Settings::menuOverflow},
     {BV_ISLAND, L"islandPills", &Settings::islandPills},
@@ -12038,6 +12245,7 @@ static int BsGet(int val) {
         case BV_G_STYLE: return g_glass.tinted ? 1 : 0;
         case BV_CCCLOSE: return g_settings.ccCloseAnim;
         case BV_NTFSHAPE: return g_settings.ntfIconShape;
+        case BV_TEXTCOLOR: return g_settings.theme;
         case BV_TCOLOR: return TintPaletteIndex();
         case BV_TLEVEL: return g_settings.tintLevel;
         case BV_TREACH: return g_settings.tintReach;
@@ -12212,6 +12420,13 @@ static void BsSet(int val, int v) {
         OvrSetStr(L"barStyle", kNames[v]);
         BarsRestyle();  // troca o fundo na barra que já existe
         TintApply();    // a cor do texto da barra segue a cor do vidro
+        return;
+    }
+    if (val == BV_TEXTCOLOR) {
+        static const PCWSTR kNames[] = {L"auto", L"dark", L"light"};  // dark = texto branco
+        g_settings.theme = std::clamp(v, 0, 2);
+        OvrSetStr(L"theme", kNames[g_settings.theme]);
+        TintApply();  // a barra muda na hora
         return;
     }
     if (val == BV_NTFSHAPE) {
@@ -12536,6 +12751,7 @@ static const PCWSTR kBsChoices[] = {L"Vidro", L"Transparente", L"Líquido"};
 static const PCWSTR kBsBarChoices[] = {L"Vidro", L"Transparente", L"Líquido", L"Vidro líquido personalizado"};
 static const PCWSTR kBsGlassStyle[] = {L"Transparente", L"Vidro líquido personalizado"};
 static const PCWSTR kBsNtfShape[] = {L"Círculo", L"Formato macOS"};
+static const PCWSTR kBsTextColor[] = {L"Automático", L"Branco", L"Preto"};
 static const PCWSTR kBsCcClose[] = {L"Cascata", L"Encolher", L"Esmaecer", L"Deslizar para cima", L"Nenhuma"};
 static const PCWSTR kBsLookChoices[] = {L"Desfoque", L"Líquido", L"Transparente"};
 static const PCWSTR kBsIslStyle[] = {L"Vidro", L"Escuro"};
@@ -12570,6 +12786,7 @@ static const PCWSTR* BsChoiceLabels(int val) {
         case BV_G_STYLE: return kBsGlassStyle;
         case BV_CCCLOSE: return kBsCcClose;
         case BV_NTFSHAPE: return kBsNtfShape;
+        case BV_TEXTCOLOR: return kBsTextColor;
     }
     return kBsChoices;
 }
@@ -13371,6 +13588,8 @@ static bool BsRowDisabled(int rowIdx) {
     // Cor, força e alcance só valem com o Vidro líquido personalizado nos painéis ou na barra.
     if (d.val == BV_TCOLOR || d.val == BV_TLEVEL || d.val == BV_TREACH)
         return !g_glass.tinted && g_settings.barStyle != 3;
+    // Com a barra no Vidro líquido personalizado, o texto segue a cor do vidro.
+    if (d.val == BV_TEXTCOLOR) return g_settings.barStyle == 3;
     return false;
 }
 static int BsHitRaw(float x, float y, int* part);
@@ -13657,9 +13876,9 @@ static LRESULT CALLBACK BsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 BsRender();
             }
             const D2D1_RECT_F& P = g_bs.panel;
-            if (hit == -1 && x >= P.left && x < P.right && y >= P.top && y < P.bottom &&
-                (y < g_bs.view.top || x < g_bs.side.right)) {
-                // Arrastar pela faixa do título ou pelo vazio das seções.
+            if (hit == -1 && x >= P.left && x < P.right && y >= P.top && y < P.bottom) {
+                // Arrastar por qualquer parte sem controle: o título, o vazio das
+                // seções, os cabeçalhos e o fundo dos cartões.
                 g_bs.moving = true;
                 GetCursorPos(&g_bs.moveFrom);
                 g_bs.posFrom = g_bs.pos;
@@ -13711,6 +13930,10 @@ static LRESULT CALLBACK BsWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_LBUTTONUP: {
             if (g_bs.dragSlider >= 0 || g_bs.moving) {
+                if (g_bs.moving) {
+                    // Lembra onde ficou (para abrir ali da próxima vez).
+                    OvrSetStr(L"bsPos", std::to_wstring(g_bs.pos.x) + L"," + std::to_wstring(g_bs.pos.y));
+                }
                 g_bs.dragSlider = -1;
                 g_bs.moving = false;
                 ReleaseCapture();
@@ -13824,6 +14047,15 @@ static void BsOpenAt(const POINT* at, float scroll) {
         g_bs.H = maxH;
     }
     g_bs.pos = {(w.left + w.right - g_bs.W) / 2, std::max<LONG>(w.top, (w.top + w.bottom - g_bs.H) / 2)};
+    {
+        // Onde a pessoa a deixou da última vez, se o título ainda cabe numa tela.
+        std::wstring v;
+        int px = 0, py = 0;
+        if (UiStored(L"bsPos", v) && swscanf(v.c_str(), L"%d,%d", &px, &py) == 2) {
+            RECT head = {px + 40, py + 10, px + g_bs.W - 40, py + 40};
+            if (MonitorFromRect(&head, MONITOR_DEFAULTTONULL)) g_bs.pos = {px, py};
+        }
+    }
     if (at) {
         g_bs.pos = *at;
         g_bs.scroll = std::clamp(scroll, 0.0f, BsMaxScroll());
@@ -19488,8 +19720,10 @@ static void NtfLayout() {
         y += h + 12 * s;
     }
     if (g_ntf.groups.empty()) {
-        g_ntf.blocks.push_back({5, D2D1::RectF(x0, y, x1, y + 70 * s), -1, {}});
-        y += 76 * s;
+        // Sem notificações: uma pílula pequena no centro, como "Editar controles".
+        float pw = std::min(x1 - x0, GmMeasure(g_ntf.fBody, T(L"Nenhuma notificação")) + 34 * s), mid = (x0 + x1) / 2;
+        g_ntf.blocks.push_back({5, D2D1::RectF(mid - pw / 2, y, mid + pw / 2, y + 32 * s), -1, {}});
+        y += 38 * s;
     }
     if (g_settings.islHistNotices) {
         std::vector<int> avisos;
@@ -19930,10 +20164,12 @@ static void NtfRender() {
             NtfDrawText(rt, br, h.note.title, g_ntf.fTitle, D2D1::RectF(tx, card.top + 4 * s, card.right - 64 * s, cy + 2 * s), fg, 1);
             NtfDrawText(rt, br, h.note.sub, g_ntf.fBody, D2D1::RectF(tx, cy, card.right - 12 * s, card.bottom - 4 * s), dim, 1);
         } else if (b.kind == 5) {
-            if (floating) DrawLiquidGlass(rt, br, r, 20 * s, s, false, false, g_ntf.glass.ok, true);
+            if (floating) DrawLiquidGlass(rt, br, r, (r.bottom - r.top) / 2, s, false, false, g_ntf.glass.ok, true);
+            else GlassCard(rt, br, D2D1::RoundedRect(r, (r.bottom - r.top) / 2, (r.bottom - r.top) / 2),
+                           g_panelLight ? D2D1::ColorF(0, 0, 0, 0.07f) : D2D1::ColorF(1, 1, 1, 0.12f), s);
             g_ntf.fBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
             g_ntf.fBody->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-            br->SetColor(dim);
+            br->SetColor(fg);
             rt->DrawText(T(L"Nenhuma notificação"), (UINT32)wcslen(T(L"Nenhuma notificação")), g_ntf.fBody, r, br);
             g_ntf.fBody->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
             g_ntf.fBody->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
@@ -20495,6 +20731,7 @@ static void OpenItemMenu(Bar* b, int idx) {
         case K_DISPLAY: m = BuildDisplayMenu(); break;
         case K_KBD: m = BuildKeyboardMenu(); break;
         case K_BATTERY: m = BuildBatteryMenu(); break;
+        case K_DISK: m = BuildDiskMenu(); break;
         case K_NET: m = BuildNetworkMenu(); break;
         case K_BT: m = BuildBluetoothMenu(); break;
         case K_VOL: m = BuildVolumeMenu(); break;
@@ -20656,6 +20893,64 @@ static IDWriteTextFormat* MakeFormat(PCWSTR family, DWRITE_FONT_WEIGHT w, float 
     f->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
     f->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     return f;
+}
+
+// Ícones da barra num tamanho só. Cada glifo da fonte de ícones tem um tamanho
+// de desenho diferente (o Bluetooth é alto, a bateria é larga, a lupa é pequena),
+// então cada um é medido pela "tinta" e escalado para a mesma altura, centrado na
+// sua caixa. Os níveis do volume, do Wi-Fi e da bateria usam a medida do maior da
+// família, para o ícone não mudar de tamanho nem de lugar quando o nível muda.
+static wchar_t GlyphFamilyRef(wchar_t g) {
+    switch (g) {
+        case 0xE74F: case 0xE992: case 0xE993: case 0xE994: case 0xE995: return 0xE995;
+        case 0xE872: case 0xE873: case 0xE874: case 0xE701: return 0xE701;
+    }
+    if (g >= 0xEBA0 && g <= 0xEBAA) return 0xEBAA;
+    if (g >= 0xEBAB && g <= 0xEBB5) return 0xEBB5;
+    return g;
+}
+// A caixa da tinta de um glifo (num layout de 1000×1000, centrado na horizontal).
+static bool GlyphInk(IDWriteTextFormat* f, wchar_t g, D2D1_RECT_F* ink) {
+    static std::map<std::pair<int, wchar_t>, D2D1_RECT_F> cache;
+    if (!f) return false;
+    std::pair<int, wchar_t> key{(int)std::lround(f->GetFontSize() * 100), g};
+    auto it = cache.find(key);
+    if (it != cache.end()) {
+        *ink = it->second;
+        return ink->bottom > ink->top;
+    }
+    D2D1_RECT_F r = D2D1::RectF(0, 0, 0, 0);
+    IDWriteTextLayout* l = nullptr;
+    if (SUCCEEDED(g_dwrite->CreateTextLayout(&g, 1, f, 1000, 1000, &l))) {
+        DWRITE_OVERHANG_METRICS ov{};
+        if (SUCCEEDED(l->GetOverhangMetrics(&ov))) r = D2D1::RectF(-ov.left, -ov.top, 1000 + ov.right, 1000 + ov.bottom);
+        l->Release();
+    }
+    if (cache.size() > 512) cache.clear();
+    cache[key] = r;
+    *ink = r;
+    return r.bottom > r.top && r.right > r.left;
+}
+// A altura de todos os ícones da barra (cresce com a fonte e com "Tamanho dos ícones").
+static float BarIconH(float s) { return std::round(g_settings.fontSize * 1.08f * s * g_settings.iconScale); }
+static void BarGlyph(Bar* b, wchar_t g, float cx, float cy, float s) {
+    D2D1_RECT_F ref;
+    IDWriteTextLayout* l = nullptr;
+    if (!GlyphInk(b->fmtIcon, GlyphFamilyRef(g), &ref) ||
+        FAILED(g_dwrite->CreateTextLayout(&g, 1, b->fmtIcon, 1000, 1000, &l))) {
+        float half = BarIconH(s);
+        b->rt->DrawText(&g, 1, b->fmtIcon, D2D1::RectF(cx - half, 0, cx + half, cy * 2), b->brush);
+        return;
+    }
+    float target = BarIconH(s);
+    float k = std::min(target / (ref.bottom - ref.top), target * 1.4f / (ref.right - ref.left));  // largos (bateria) cabem na caixa
+    D2D1::Matrix3x2F old;
+    b->rt->GetTransform(&old);
+    b->rt->SetTransform(D2D1::Matrix3x2F::Translation(-(ref.left + ref.right) / 2, -(ref.top + ref.bottom) / 2) *
+                        D2D1::Matrix3x2F::Scale(k, k) * D2D1::Matrix3x2F::Translation(cx, cy) * old);
+    b->rt->DrawTextLayout(D2D1::Point2F(0, 0), l, b->brush);
+    b->rt->SetTransform(old);
+    l->Release();
 }
 
 static bool EnsureResources(Bar* b) {
@@ -20933,7 +21228,7 @@ static bool BarAnimStep(Bar* b) {
 // Ordem dos ícones da direita (da esquerda para a direita), guardada pelo mod.
 static std::vector<int> g_barOrder;
 static const std::vector<int>& BarOrder() {
-    static const int kDefault[] = {K_WEATHER, K_NOW, K_TRAY, K_DISPLAY, K_KBD, K_BATTERY, K_NET,
+    static const int kDefault[] = {K_WEATHER, K_NOW, K_TRAY, K_DISK, K_DISPLAY, K_KBD, K_BATTERY, K_NET,
                                    K_BT,      K_VOL, K_FOCUS, K_SEARCH, K_PRIV, K_NOTIF, K_CC};
     if (g_barOrder.empty()) {
         wchar_t buf[128] = L"";
@@ -20968,7 +21263,8 @@ static void BarOrderSave() {
 
 static bool BarMovable(ItemKind k) {
     return k == K_WEATHER || k == K_TRAY || k == K_DISPLAY || k == K_KBD || k == K_BATTERY || k == K_NET || k == K_BT ||
-           k == K_VOL || k == K_CC || k == K_NOW || k == K_FOCUS || k == K_SEARCH || k == K_PRIV || k == K_NOTIF;
+           k == K_VOL || k == K_CC || k == K_NOW || k == K_FOCUS || k == K_SEARCH || k == K_PRIV || k == K_NOTIF ||
+           k == K_DISK;
 }
 
 // Cor do item selecionado em azul: texto/ícone brancos enquanto desenha o item.
@@ -21019,6 +21315,9 @@ static std::wstring BarItemName(Bar* b, int idx) {
         case K_MENU: return it.index < (int)g_topMenus.size() ? g_topMenus[it.index].title : L"";
         case K_DISPLAY: return L"Tela";
         case K_KBD: return L"Entrada de texto";
+        case K_DISK:
+            return g_diskBarPct >= 0 ? TF(L"Discos: o do sistema está %s% cheio", {std::to_wstring(g_diskBarPct)})
+                                     : std::wstring(L"Discos");
         case K_BATTERY:
             return TF(g_status.charging ? L"Bateria: %s% (carregando)" : L"Bateria: %s%", {std::to_wstring(g_status.battery)});
         case K_NET:
@@ -21235,6 +21534,12 @@ static void Render(Bar* b) {
                 break;
             case K_DISPLAY:
                 if (g_settings.showDisplay) right.push_back({K_DISPLAY, Glyph(0xE706), true, 1.0f, L""});
+                break;
+            case K_DISK:
+                if (g_settings.showDisks) {
+                    DiskBarRefresh();
+                    right.push_back({K_DISK, Glyph(0xEDA2), true, 1.0f, L""});
+                }
                 break;
             case K_TRAY:
                 if (g_settings.showTray) right.push_back({K_TRAY, L"", false, 1.0f, L""});
@@ -21465,8 +21770,7 @@ static void Render(Bar* b) {
                     D2D1_RECT_F gr = D2D1::RectF(o.x - half, 0, o.x + half, h);
                     // Em uso, o próprio ícone fica laranja ou verde (a sombra não).
                     b->brush->SetColor(o.on && !shadowPass ? o.c : fg);
-                    wchar_t gs[2] = {o.g, 0};
-                    b->rt->DrawText(gs, 1, b->fmtIcon, gr, b->brush);
+                    BarGlyph(b, o.g, std::round((gr.left + gr.right) / 2), h / 2, s);
                 }
                 b->brush->SetColor(fg);
                 continue;
@@ -21494,7 +21798,7 @@ static void Render(Bar* b) {
                 float is = s * g_settings.iconScale;
                 float box = std::round(g_settings.fontSize * 1.15f * 1.35f * is);
                 wchar_t note = g_ext.playing ? 0xEC4F : 0xE769;
-                b->rt->DrawText(&note, 1, b->fmtIcon, D2D1::RectF(p.l + ip, 0, p.l + ip + box, h), b->brush);
+                BarGlyph(b, note, std::round(p.l + ip + box / 2), h / 2, s);
                 D2D1_RECT_F tr = D2D1::RectF(p.l + ip + box + 3 * s, 0, p.r - ip + 1, h);
                 float tw = Measure(b->fmtText, p.spec.text);
                 if (tw <= tr.right - tr.left + 0.5f) {
@@ -21559,9 +21863,11 @@ static void Render(Bar* b) {
             }
             b->brush->SetOpacity(p.spec.alpha * animAlpha);
             const std::wstring& txt = animText.empty() ? p.spec.text : animText;
-            b->rt->DrawText(txt.c_str(), (UINT32)txt.size(),
-                            p.spec.icon ? b->fmtIcon : b->fmtText, D2D1::RectF(l, 0, p.r - ip + 1, h),
-                            b->brush);
+            if (p.spec.icon && txt.size() == 1)
+                BarGlyph(b, txt[0], std::round((l + p.r - ip) / 2), h / 2, s);
+            else
+                b->rt->DrawText(txt.c_str(), (UINT32)txt.size(), p.spec.icon ? b->fmtIcon : b->fmtText,
+                                D2D1::RectF(l, 0, p.r - ip + 1, h), b->brush);
             b->brush->SetOpacity(1.0f);
             b->rt->SetTransform(beforeSpin);
         }
@@ -22151,6 +22457,8 @@ static void LqLiveTick() {
     if (g_wxw.hwnd && LqLiveRefresh(g_wxw.glass.lq)) { any = true; WxRender(); }
     if (g_calw.hwnd && LqLiveRefresh(g_calw.glass.lq)) { any = true; CalRender(); }
     if (g_isl.hwnd && LqLiveRefresh(g_isl.glass.lq)) { any = true; IslandRender(); }
+    if (g_np.hwnd && LqLiveRefresh(g_np.glass.lq)) { any = true; NpRender(); }
+    if (g_ntf.hwnd && LqLiveRefresh(g_ntf.glass.lq)) { any = true; NtfRender(); }
     if (!any) KillTimer(g_owner, TIMER_LIQUID);
 }
 
@@ -23114,6 +23422,19 @@ const UiTr kUiTr[] = {
     {L"Tocando agora", L"Now Playing", L"Reproduciendo", L"À l’écoute", L"Aktuelle Wiedergabe", L"In riproduzione", L"正在播放"},
     {L"Foco (quando ativo)", L"Focus (when on)", L"Concentración (cuando está activo)", L"Concentration (si activée)", L"Fokus (wenn aktiv)", L"Full immersion (quando attivo)", L"专注 (开启时)"},
     {L"Busca", L"Search", L"Búsqueda", L"Recherche", L"Suche", L"Ricerca", L"搜索"},
+    {L"Cor do texto e dos ícones", L"Text and icon color", L"Color del texto y los iconos", L"Couleur du texte et des icônes", L"Text- und Symbolfarbe", L"Colore di testo e icone", L"文字和图标颜色"},
+    {L"Automático segue o tema do Windows", L"Automatic follows the Windows theme", L"Automático sigue el tema de Windows", L"Automatique suit le thème de Windows", L"Automatisch folgt dem Windows-Design", L"Automatico segue il tema di Windows", L"自动跟随 Windows 主题"},
+    {L"Branco", L"White", L"Blanco", L"Blanc", L"Weiß", L"Bianco", L"白色"},
+    {L"Preto", L"Black", L"Negro", L"Noir", L"Schwarz", L"Nero", L"黑色"},
+    {L"Discos", L"Disks", L"Discos", L"Disques", L"Laufwerke", L"Dischi", L"磁盘"},
+    {L"Clique para ver os discos e quanto cada um está cheio", L"Click to see the disks and how full each one is", L"Haz clic para ver los discos y cuánto está lleno cada uno", L"Cliquez pour voir les disques et leur remplissage", L"Klicken, um die Laufwerke und ihre Belegung zu sehen", L"Fai clic per vedere i dischi e quanto è pieno ciascuno", L"点击查看磁盘及其使用量"},
+    {L"Discos: o do sistema está %s% cheio", L"Disks: the system disk is %s% full", L"Discos: el del sistema está al %s%", L"Disques : le disque système est plein à %s %", L"Laufwerke: Systemlaufwerk zu %s% voll", L"Dischi: quello di sistema è pieno al %s%", L"磁盘：系统磁盘已用 %s%"},
+    {L"%s livres de %s", L"%s free of %s", L"%s libres de %s", L"%s libres sur %s", L"%s frei von %s", L"%s liberi su %s", L"%s 可用，共 %s"},
+    {L"Disco local", L"Local Disk", L"Disco local", L"Disque local", L"Lokaler Datenträger", L"Disco locale", L"本地磁盘"},
+    {L"Unidade removível", L"Removable Drive", L"Unidad extraíble", L"Lecteur amovible", L"Wechseldatenträger", L"Unità rimovibile", L"可移动磁盘"},
+    {L"Nenhum disco encontrado", L"No disks found", L"No se encontraron discos", L"Aucun disque trouvé", L"Keine Laufwerke gefunden", L"Nessun disco trovato", L"未找到磁盘"},
+    {L"Abrir Este Computador", L"Open This PC", L"Abrir Este equipo", L"Ouvrir Ce PC", L"Dieser PC öffnen", L"Apri Questo PC", L"打开此电脑"},
+    {L"Armazenamento...", L"Storage...", L"Almacenamiento...", L"Stockage...", L"Speicher...", L"Archiviazione...", L"存储..."},
     {L"A busca abre", L"Search opens", L"La búsqueda abre", L"La recherche ouvre", L"Die Suche öffnet", L"La ricerca apre", L"搜索打开"},
     {L"Siri Plus: a janela padrão dele, no estilo Spotlight", L"Siri Plus: its default window, Spotlight style", L"Siri Plus: su ventana predeterminada, estilo Spotlight", L"Siri Plus : sa fenêtre par défaut, style Spotlight", L"Siri Plus: sein Standardfenster im Spotlight-Stil", L"Siri Plus: la sua finestra predefinita, stile Spotlight", L"Siri Plus: 其默认窗口 (Spotlight 风格)"},
     {L"Privacidade (microfone e câmera)", L"Privacy (microphone and camera)", L"Privacidad (micrófono y cámara)", L"Confidentialité (micro et caméra)", L"Datenschutz (Mikrofon und Kamera)", L"Privacy (microfono e fotocamera)", L"隐私 (麦克风和摄像头)"},

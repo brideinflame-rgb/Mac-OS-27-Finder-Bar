@@ -23,6 +23,7 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
 - **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; one glass setting for the Control Center, menus, panels and pills; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
+- **Disks** (optional): the menu lists every local and removable disk with a usage bar and opens it in Explorer; bar text and icons in white, black or automatic; all bar icons at one size that grows with the icon size setting.
 - **Settings window**: logo → **Menu Bar Settings…** opens the settings in a macOS-style window, with search, applied live without restarting the bar
 - **Your language**: follows the Windows display language, or pick one (English, Portuguese, Spanish, French, German, Italian and Simplified Chinese)
 
@@ -43,7 +44,7 @@ The settings live in the mod's own window: logo menu → **Menu Bar Settings…*
 
 Some Control Center tiles and menu items change real Windows settings, the same ones Windows' own quick settings change, and they stay changed after the mod is turned off: dark mode (app and system theme, both set to the same value), night light, power mode and power plan (a power mode also switches the plan to Balanced), energy saver, Do Not Disturb, brightness, default audio device, volume and mute, microphone mute, Wi-Fi and Bluetooth radios, Wi-Fi network and display mode. Nothing changes unless you click the matching tile or item.
 
-While the bar's volume and brightness indicator is on, Windows' own volume pill is kept hidden so only one shows (the older pill is minimized; the newer one, which the keyboard volume keys show on recent Windows 11 versions, is also moved off the screen). Turning the indicator or the mod off brings it back; if the bar's process ever crashes, it comes back when Explorer restarts.
+While the bar's volume and brightness indicator is on, Windows' own volume pill is kept hidden so only one shows (the older pill is minimized; the newer one, which the keyboard volume keys show on recent Windows 11 versions, is cloaked by the mod's part inside Explorer, or moved off the screen if that fails). It may still show once, the first time the volume changes after Explorer starts. Turning the indicator or the mod off brings it back; if the bar's process ever crashes, it comes back when Explorer restarts.
 
 ## Network use
 
