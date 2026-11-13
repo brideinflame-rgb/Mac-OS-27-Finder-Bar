@@ -43,7 +43,7 @@ Os ajustes ficam na janela do próprio mod: menu do logo → **Ajustes da Barra 
 
 Alguns blocos da Central de Controle e itens de menu mudam ajustes reais do Windows, os mesmos que as configurações rápidas do próprio Windows mudam, e eles continuam mudados depois que o mod é desligado: modo escuro (tema dos apps e do sistema, os dois com o mesmo valor), luz noturna, modo e plano de energia (um modo de energia também passa o plano para Equilibrado), economia de energia, Não Perturbe, brilho, saída de áudio padrão, volume e mudo, microfone silenciado, rádios de Wi-Fi e Bluetooth, rede Wi-Fi e modo de projeção. Nada muda sem você clicar no bloco ou item.
 
-Enquanto o indicador de volume e brilho da barra está ligado, a pílula de volume do próprio Windows fica minimizada, para aparecer só uma. Desligar o indicador ou o mod a traz de volta.
+Enquanto o indicador de volume e brilho da barra está ligado, a pílula de volume do próprio Windows fica minimizada, para aparecer só uma. Desligar o indicador ou o mod a traz de volta; se o processo da barra travar e fechar, ela volta quando o Explorer reiniciar.
 
 ## Uso da rede
 
