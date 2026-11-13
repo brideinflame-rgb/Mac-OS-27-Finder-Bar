@@ -20732,6 +20732,19 @@ static void Render(Bar* b) {
     D2D1_COLOR_F hl = g_light ? D2D1::ColorF(0, 0, 0, 0.10f) : D2D1::ColorF(1, 1, 1, 0.18f);
     D2D1_COLOR_F hlOpen = g_light ? D2D1::ColorF(0, 0, 0, 0.16f) : D2D1::ColorF(1, 1, 1, 0.26f);
 
+    // Os itens são remontados a cada desenho, e o número de menus do app ativo
+    // muda (ex.: ao abrir um painel da barra, o app ativo troca). O destaque
+    // (mouse, painel aberto, indicador) segue o item, não a posição antiga.
+    struct Mark { int* idx; ItemKind kind; int sub; };
+    Mark marks[] = {{&b->hover, K_LOGO, -1}, {&b->open, K_LOGO, -1}, {&b->flash, K_LOGO, -1}};
+    for (Mark& m : marks) {
+        if (*m.idx >= 0 && *m.idx < (int)b->items.size()) {
+            m.kind = b->items[*m.idx].kind;
+            m.sub = b->items[*m.idx].index;
+        } else {
+            m.sub = -2;  // nada marcado
+        }
+    }
     b->items.clear();
 
     // ---- Lado direito (montado da direita para a esquerda) ----
@@ -20856,6 +20869,15 @@ static void Render(Bar* b) {
         lx += mw;
     }
     for (auto& p : placed) b->items.push_back({p.spec.kind, 0, p.l, p.r});
+    for (Mark& m : marks) {
+        if (m.sub == -2) continue;
+        *m.idx = -1;
+        for (int i = 0; i < (int)b->items.size(); i++)
+            if (b->items[i].kind == m.kind && b->items[i].index == m.sub) {
+                *m.idx = i;
+                break;
+            }
+    }
 
     // ---- Desenho ----
     bool animating = BarAnimStep(b);
