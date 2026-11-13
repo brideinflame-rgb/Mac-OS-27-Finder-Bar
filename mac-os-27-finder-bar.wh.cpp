@@ -20,19 +20,9 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 
 Available in English, Português, Español, Français, Deutsch, Italiano and 中文（简体）. The language follows Windows automatically, or can be picked in the settings.
 
-![The bar](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/bar.png)
+![Mac OS 27 Finder Bar in use](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/demo.gif)
 
-![Control Center](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/control-center.png)
-
-![Notifications](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/notifications.png)
-
-![Logo menu](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/logo-menu.png)
-
-![Settings window](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/settings.png)
-
-![Control Center in action](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/control-center.gif)
-
-![Animated weather widget](https://raw.githubusercontent.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/main/screenshots/weather.gif)
+[Watch in full quality (MP4)](https://github.com/brideinflame-rgb/Mac-OS-27-Finder-Bar/blob/main/screenshots/demo.mp4)
 
 ---
 

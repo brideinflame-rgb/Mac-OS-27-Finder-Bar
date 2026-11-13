@@ -4,19 +4,9 @@
 
 A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to the top of the screen in Windows 11: the menus of the app in front on the left, and system status, Control Center, notifications and the clock on the right, all in live glass.
 
-![The bar: app menus on the left, status icons and the clock on the right](screenshots/bar.png)
+![Mac OS 27 Finder Bar in use: the bar, Control Center, notifications, Now Playing and the settings window](screenshots/demo.gif)
 
-| Control Center | Notifications |
-|---|---|
-| ![Control Center](screenshots/control-center.png) | ![Notifications panel](screenshots/notifications.png) |
-
-| Logo menu | Settings window |
-|---|---|
-| ![Logo menu](screenshots/logo-menu.png) | ![Settings window](screenshots/settings.png) |
-
-| Control Center in action | Weather |
-|---|---|
-| ![Control Center: power mode box and Edit Controls](screenshots/control-center.gif) | ![Animated weather widget](screenshots/weather.gif) |
+[Watch in full quality (MP4)](screenshots/demo.mp4)
 
 ---
 
