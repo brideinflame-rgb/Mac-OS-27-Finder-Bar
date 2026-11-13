@@ -78,7 +78,9 @@ Turn on **Windows notifications** in logo → **Menu Bar Settings…** → **Not
 - **Live glass**: panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels and pills, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
 - **One glass for everything**: the Control Center, menus, panels and pills share the same glass settings (style, tint, liquid glass, refraction, blur, live)
-- Bar text and icons in white, black or automatic (following the Windows theme)
+- Bar text and icons in white, black or automatic (following the Windows theme), for all displays or each display on its own
+- Clicking the album cover (Control Center or Now Playing) brings the playing app's window to the front
+- Choose where the bar shows: all displays, the main one, or a specific display (listed by name); if that display is disconnected, the bar moves to the main one
 - **Disks** (optional): its menu lists every local and removable disk with a usage bar and opens it in Explorer
 - Bar icons share one size: each icon is measured and scaled to the same height, and they all grow together with the icon size setting
 - Light, dark or automatic theme, nine selection colors for the bar and menus, font, font size, icon size and bar height
@@ -273,6 +275,8 @@ The bar runs in its own Windhawk process (shown as Windhawk in Task Manager), so
 #include <dbt.h>
 #include <cfgmgr32.h>
 #include <shlobj.h>
+#include <propsys.h>
+#include <tlhelp32.h>
 
 // C++/WinRT (vem com o compilador do Windhawk): vidro por bloco, rádios, mídia
 // e leitura das notificações do Windows.
@@ -321,6 +325,8 @@ struct Settings {
     DWORD tintDark, tintLight;
     bool solidWhenMaximized;
     bool allMonitors;
+    std::wstring textColorMon;  // cor do texto por monitor: "\\.\DISPLAY2=1|..." (0 auto, 1 branco, 2 preto)
+    std::wstring barMonitor;  // "all", "primary" ou o nome do monitor (\\.\DISPLAY2)
     bool autoHide;
     bool hideOnFullscreen;
     std::wstring desktopName;
@@ -731,6 +737,9 @@ static void LoadSettings() {
     s.tintLight = ParseArgb(ReadStr(L"tintLight"), 0x50F2F2F2);
     s.solidWhenMaximized = OvrInt(L"solidWhenMaximized") != 0;
     s.allMonitors = OvrInt(L"allMonitors") != 0;
+    // Onde a barra aparece; sem escolha guardada, segue o antigo "todos os monitores".
+    if (!UiStored(L"textColorMon", s.textColorMon)) s.textColorMon.clear();
+    if (!UiStored(L"barMonitor", s.barMonitor) || s.barMonitor.empty()) s.barMonitor = s.allMonitors ? L"all" : L"primary";
     s.autoHide = OvrInt(L"autoHide") != 0;
     s.hideOnFullscreen = OvrInt(L"hideOnFullscreen") != 0;
     s.desktopName = ReadStr(L"desktopName");
@@ -866,6 +875,7 @@ struct Item {
 struct Bar {
     HWND hwnd = nullptr;
     HMONITOR monitor = nullptr;
+    std::wstring device;  // nome do monitor (\\.\DISPLAY2), para a cor própria dele
     RECT monRect{};
     UINT dpi = 96;
     int heightPx = 28;
@@ -1339,7 +1349,54 @@ struct ACCENT_POLICY { int AccentState; int AccentFlags; DWORD GradientColor; in
 struct WINCOMPATTRDATA { int Attribute; PVOID Data; SIZE_T SizeOfData; };
 using SetWindowCompositionAttribute_t = BOOL(WINAPI*)(HWND, WINCOMPATTRDATA*);
 
+// Cor do texto e dos ícones de um monitor: -1 = a de todos; 0 automático, 1 branco, 2 preto.
+static int TextColorFor(const std::wstring& device) {
+    const std::wstring& all = g_settings.textColorMon;
+    for (size_t a = 0; a < all.size();) {
+        size_t e = all.find(L'|', a);
+        if (e == std::wstring::npos) e = all.size();
+        std::wstring item = all.substr(a, e - a);
+        size_t eq = item.rfind(L'=');
+        if (eq != std::wstring::npos && _wcsicmp(item.substr(0, eq).c_str(), device.c_str()) == 0)
+            return std::clamp(_wtoi(item.c_str() + eq + 1), 0, 2);
+        a = e + 1;
+    }
+    return -1;
+}
+static void TextColorSet(const std::wstring& device, int v) {
+    std::wstring out;
+    const std::wstring& all = g_settings.textColorMon;
+    for (size_t a = 0; a < all.size();) {
+        size_t e = all.find(L'|', a);
+        if (e == std::wstring::npos) e = all.size();
+        std::wstring item = all.substr(a, e - a);
+        size_t eq = item.rfind(L'=');
+        if (!item.empty() && !(eq != std::wstring::npos && _wcsicmp(item.substr(0, eq).c_str(), device.c_str()) == 0))
+            out += (out.empty() ? L"" : L"|") + item;
+        a = e + 1;
+    }
+    if (v >= 0) out += (out.empty() ? L"" : L"|") + device + L"=" + std::to_wstring(v);
+    g_settings.textColorMon = out;
+    OvrSetStr(L"textColorMon", out);
+}
+// Claro ou escuro na barra deste monitor (o texto escuro vai num fundo claro).
+static bool BarLight(const Bar* b) {
+    if (g_settings.barStyle == 3) return g_light;  // segue a cor do vidro
+    int t = TextColorFor(b->device);
+    if (t < 0) return g_light;
+    if (t == 1) return false;
+    if (t == 2) return true;
+    return ReadPersonalizeDword(L"SystemUsesLightTheme", 0) != 0;
+}
+// Enquanto desenha (ou aplica o vidro de) uma barra, o tema é o do monitor dela.
+struct BarLightScope {
+    bool saved;
+    explicit BarLightScope(const Bar* b) : saved(g_light) { g_light = BarLight(b); }
+    ~BarLightScope() { g_light = saved; }
+};
+
 static void ApplyGlass(Bar* b) {
+    BarLightScope barLight(b);
     static auto pSWCA = (SetWindowCompositionAttribute_t)(void*)GetProcAddress(
         GetModuleHandleW(L"user32.dll"), "SetWindowCompositionAttribute");
 
@@ -2470,6 +2527,7 @@ enum {
     ID_SW_GLASSCLEAR = 1970, ID_SW_LIQUID, ID_SW_LIVE, ID_BAR_SETTINGS = 1975,
     ID_PRIV_MICMUTE = 1950, ID_PRIV_INFO,
     ID_NOW_PREV = 1101 + 40, ID_NOW_PLAY, ID_NOW_NEXT, ID_FOCUS_OFF, ID_FOCUS_SETTINGS, ID_PRIV_SETTINGS,
+    ID_NOW_OPEN = 1147,
     ID_HIST_CLEAR = 1150, ID_HIST_BASE = 1151, ID_HIST_WINCENTER = 1190,
     ID_DISK_BASE = 1800, ID_DISK_EXPLORER = 1830, ID_DISK_SETTINGS,
 };
@@ -7471,6 +7529,7 @@ static void CcRefreshLocal() {
 
 // Fechar: a central volta para o ícone de onde veio (encolhe para o canto de
 // cima à direita e some), em vez de sumir de uma vez.
+static void OpenMediaApp();  // o app que está tocando (Tocando agora)
 static void CloseControlCenter(bool refocus) {
     if (!g_cc.hwnd) return;
     if (g_settings.ccCloseAnim == 4) {  // "Nenhuma": fecha na hora (vale mesmo sem animação ao abrir)
@@ -7979,6 +8038,15 @@ static LRESULT CALLBACK CcWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (hit >= 0 && hit == pressed && hit != CC_MEDIA) CcActivate(hit);
+            if (hit == CC_MEDIA && pressed == CC_MEDIA) {
+                // Clique na capa do álbum: abre o app que está tocando.
+                float s = g_cc.s, x = (float)LP_X(lp), y = (float)LP_Y(lp);
+                const D2D1_RECT_F& r = g_cc.rc[CC_MEDIA];
+                if (x >= r.left + 14 * s && x < r.left + 58 * s && y >= r.top + 13 * s && y < r.top + 57 * s) {
+                    CloseControlCenter(false);
+                    OpenMediaApp();
+                }
+            }
             return 0;
         }
         case WM_MOUSEWHEEL: {
@@ -11238,6 +11306,93 @@ struct NowPlayingWnd {
 [[clang::no_destroy]] static std::optional<NowPlayingWnd> g_npStore{std::in_place};
 static NowPlayingWnd& g_np = *g_npStore;
 
+// ---- O app que está tocando ----
+// Clique na capa do álbum (na Central ou no Tocando agora): traz a janela do app
+// para a frente. O id da sessão de mídia é o AppUserModelID do app (apps da Store,
+// PWAs) ou o nome do programa (Spotify.exe, Chrome...).
+static std::wstring WindowAumid(HWND h) {
+    std::wstring out;
+    IPropertyStore* ps = nullptr;
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(h, IID_PPV_ARGS(&ps))) && ps) {
+        // PKEY_AppUserModel_ID
+        static const PROPERTYKEY kAumid = {{0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
+        PROPVARIANT v;
+        PropVariantInit(&v);
+        if (SUCCEEDED(ps->GetValue(kAumid, &v)) && v.vt == VT_LPWSTR && v.pwszVal) out = v.pwszVal;
+        PropVariantClear(&v);
+        ps->Release();
+    }
+    return out;
+}
+static std::wstring ExeOfPid(DWORD pid) {
+    std::wstring out;
+    if (HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid)) {
+        wchar_t buf[MAX_PATH];
+        DWORD n = MAX_PATH;
+        if (QueryFullProcessImageNameW(p, 0, buf, &n)) out.assign(buf, n);
+        CloseHandle(p);
+    }
+    return out;
+}
+static const wchar_t* BaseName(const std::wstring& path) {
+    size_t sl = path.find_last_of(L"\\/");
+    return path.c_str() + (sl == std::wstring::npos ? 0 : sl + 1);
+}
+struct MediaWinFind {
+    std::wstring id, exe;  // o id da sessão; e, se for um programa, o nome do .exe
+    HWND found;
+};
+static BOOL CALLBACK MediaWinProc(HWND h, LPARAM lp) {
+    auto* f = reinterpret_cast<MediaWinFind*>(lp);
+    if (!IsAppWindow(h)) return TRUE;
+    std::wstring a = WindowAumid(h);
+    if (!a.empty() && _wcsicmp(a.c_str(), f->id.c_str()) == 0) {
+        f->found = h;
+        return FALSE;
+    }
+    if (!f->exe.empty()) {
+        std::wstring path = ExeOfPid(RealPidOf(h));
+        if (!path.empty() && _wcsicmp(BaseName(path), f->exe.c_str()) == 0) {
+            f->found = h;
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+static void OpenMediaApp() {
+    std::wstring id;
+    AcquireSRWLockShared(&g_ccLock);
+    id = g_ccShared.app;
+    ReleaseSRWLockShared(&g_ccLock);
+    if (id.empty()) return;
+    bool packaged = id.find(L'!') != std::wstring::npos;
+    MediaWinFind f{id, L"", nullptr};
+    if (!packaged) {
+        f.exe = BaseName(id);
+        if (f.exe.find(L'.') == std::wstring::npos) f.exe += L".exe";  // "Chrome" → chrome.exe
+    }
+    EnumWindows(MediaWinProc, (LPARAM)&f);
+    if (f.found) {
+        if (IsIconic(f.found)) ShowWindow(f.found, SW_RESTORE);
+        ForceForeground(f.found);
+        return;
+    }
+    // Sem janela aberta (minimizado na bandeja, por exemplo): abre o app, que mostra
+    // a janela que já existe.
+    if (packaged) {
+        OpenUri(L"explorer.exe", (L"shell:AppsFolder\\" + id).c_str());
+        return;
+    }
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    std::wstring path;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && path.empty(); ok = Process32NextW(snap, &pe))
+        if (_wcsicmp(pe.szExeFile, f.exe.c_str()) == 0) path = ExeOfPid(pe.th32ProcessID);
+    CloseHandle(snap);
+    if (!path.empty()) ShellExecuteW(nullptr, L"open", path.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
 static std::wstring NpAppName(std::wstring id) {
     size_t bang = id.find(L'!');
     if (bang != std::wstring::npos) id.resize(bang);
@@ -11762,6 +11917,7 @@ static int NpHit(float x, float y) {
     if (in(g_np.next)) return 3;
     if (in(g_np.out)) return 4;
     if (g_np.hasTimeline && in(g_np.track, 9 * g_np.s)) return 5;
+    if (in(g_np.art)) return 6;  // a capa: abre o app
     return 0;
 }
 
@@ -11905,6 +12061,10 @@ static LRESULT CALLBACK NpWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             } else if (h == 4) {
                 NpOutputMenu();
                 return 0;
+            } else if (h == 6) {
+                NpClose();
+                OpenMediaApp();
+                return 0;
             }
             NpRender();
             return 0;
@@ -12027,7 +12187,7 @@ enum BsVal {
     BV_BATTPCT, BV_AUTOHIDE, BV_HIDEFS, BV_SOLIDMAX, BV_ALLMON, BV_FLYOUTS, BV_OSD, BV_DIM,
     BV_G_TRANSP, BV_G_CLEAR, BV_G_LIQUID, BV_G_REFRACT, BV_G_BLUR, BV_G_LIVE, BV_WEATHER, BV_BARSTYLE, BV_HEIGHT, BV_FONT, BV_ICONS, BV_BSSTYLE, BV_BSTRANSP, BV_SELBAR, BV_SELMENU, BV_UPDATES,
     BV_G_TINT, BV_SEARCHTGT, BV_LANG, BV_NPBAR, BV_ICSADD, BV_ICSCLEAR,
-    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE, BV_NTFSHAPE, BV_TEXTCOLOR, BV_DISK,
+    BV_G_STYLE, BV_TCOLOR, BV_TLEVEL, BV_TREACH, BV_CCCLOSE, BV_NTFSHAPE, BV_TEXTCOLOR, BV_DISK, BV_BARMON, BV_TEXTMON,
 };
 struct BsRowDef {
     int kind;
@@ -12060,6 +12220,7 @@ static const BsRowDef kBsRows[] = {
     {BR_HEADER, BV_NONE, L"Barra", 0xE771, 0x0A84FF, L"Fundo, cores de seleção, tamanho e quando a barra aparece"},
     {BR_CHOICE, BV_LANG, L"Idioma", 0, 0, L"Automático segue o idioma do Windows"},
     {BR_CHOICE, BV_BARSTYLE, L"Fundo", 0, 0},
+    {BR_CHOICE, BV_TEXTMON, L"Cor do texto: monitor", 0, 0, L"Escolha um monitor para dar a ele uma cor própria"},
     {BR_CHOICE, BV_TEXTCOLOR, L"Cor do texto e dos ícones", 0, 0, L"Automático segue o tema do Windows"},
     {BR_COLORS, BV_SELBAR, L"Seleção na barra", 0, 0},
     {BR_COLORS, BV_SELMENU, L"Seleção nos menus", 0, 0},
@@ -12072,7 +12233,7 @@ static const BsRowDef kBsRows[] = {
     {BR_SWITCH, BV_AUTOHIDE, L"Ocultar e mostrar a barra automaticamente", 0, 0, L"Aparece ao encostar o mouse no topo da tela"},
     {BR_SWITCH, BV_HIDEFS, L"Ocultar em tela cheia", 0, 0, L"Jogos, vídeos e apps em tela cheia ficam sem a barra"},
     {BR_SWITCH, BV_SOLIDMAX, L"Fundo sólido com janela maximizada", 0, 0},
-    {BR_SWITCH, BV_ALLMON, L"Mostrar em todos os monitores", 0, 0},
+    {BR_CHOICE, BV_BARMON, L"Mostrar a barra em", 0, 0, L"Todos os monitores, o principal ou um deles; se o escolhido for desconectado, a barra vai para o principal"},
     {BR_SWITCH, BV_MORE, L"Recolher numa seta os ícones que não cabem", 0, 0, L"Como as setas ao lado do notch no macOS 27"},
     {BR_HEADER, BV_NONE, L"Menus e painéis", 0xE7C4, 0x5E5CE6, L"Tocando agora, pílulas de volume e brilho"},
     {BR_SWITCH, BV_UPDATES, L"Atualizações pendentes no menu do logo", 0, 0},
@@ -12227,6 +12388,103 @@ static int TintPaletteIndex() {
         if (kTintPalette[i] == g_settings.tintColor) return i;
     return -1;  // uma cor da paleta do Windows
 }
+// ---- Em qual monitor a barra aparece ----
+// "all" (todos), "primary" (o principal) ou o nome de um monitor (\\.\DISPLAY2).
+// O escolhido desconectado: a barra vai para o principal.
+struct MonChoice {
+    std::wstring device, label;
+};
+// O nome do monitor (ex.: "LG ULTRAWIDE"), como nas Configurações de tela.
+static std::wstring MonitorFriendly(const wchar_t* gdiName) {
+    UINT32 np = 0, nm = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &np, &nm) != ERROR_SUCCESS) return L"";
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths(np);
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes(nm);
+    if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &np, paths.data(), &nm, modes.data(), nullptr) != ERROR_SUCCESS)
+        return L"";
+    for (UINT32 i = 0; i < np; i++) {
+        DISPLAYCONFIG_SOURCE_DEVICE_NAME src{};
+        src.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+        src.header.size = sizeof(src);
+        src.header.adapterId = paths[i].sourceInfo.adapterId;
+        src.header.id = paths[i].sourceInfo.id;
+        if (DisplayConfigGetDeviceInfo(&src.header) != ERROR_SUCCESS || _wcsicmp(src.viewGdiDeviceName, gdiName) != 0) continue;
+        DISPLAYCONFIG_TARGET_DEVICE_NAME tgt{};
+        tgt.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+        tgt.header.size = sizeof(tgt);
+        tgt.header.adapterId = paths[i].targetInfo.adapterId;
+        tgt.header.id = paths[i].targetInfo.id;
+        if (DisplayConfigGetDeviceInfo(&tgt.header) == ERROR_SUCCESS && tgt.monitorFriendlyDeviceName[0])
+            return tgt.monitorFriendlyDeviceName;
+    }
+    return L"";
+}
+static BOOL CALLBACK MonListProc(HMONITOR mon, HDC, LPRECT, LPARAM lp) {
+    auto* v = reinterpret_cast<std::vector<std::pair<MONITORINFOEXW, bool>>*>(lp);
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(mon, &mi)) v->push_back({mi, (mi.dwFlags & MONITORINFOF_PRIMARY) != 0});
+    return TRUE;
+}
+// Os monitores ligados agora: o principal primeiro, depois da esquerda para a direita.
+static std::vector<MonChoice> MonitorChoices() {
+    std::vector<std::pair<MONITORINFOEXW, bool>> v;
+    EnumDisplayMonitors(nullptr, nullptr, MonListProc, (LPARAM)&v);
+    std::stable_sort(v.begin(), v.end(), [](const auto& a, const auto& b) {
+        if (a.second != b.second) return a.second;
+        return a.first.rcMonitor.left < b.first.rcMonitor.left;
+    });
+    std::vector<MonChoice> out;
+    for (size_t i = 0; i < v.size(); i++) {
+        const MONITORINFOEXW& mi = v[i].first;
+        std::wstring name = MonitorFriendly(mi.szDevice);
+        if (name.size() > 28) name = name.substr(0, 27) + L"…";
+        wchar_t buf[160];
+        swprintf(buf, 160, L"%s %d%s%s (%d×%d)", T(L"Monitor"), (int)i + 1, name.empty() ? L"" : L": ", name.c_str(),
+                 (int)(mi.rcMonitor.right - mi.rcMonitor.left), (int)(mi.rcMonitor.bottom - mi.rcMonitor.top));
+        out.push_back({mi.szDevice, buf});
+    }
+    return out;
+}
+// A barra vai para este monitor?
+static bool BarOnMonitor(const MONITORINFOEXW& mi, bool chosenPresent) {
+    const std::wstring& w = g_settings.barMonitor;
+    bool primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
+    if (w == L"all") return true;
+    if (w == L"primary" || !chosenPresent) return primary;
+    return _wcsicmp(mi.szDevice, w.c_str()) == 0;
+}
+static bool BarChosenMonitorPresent() {
+    const std::wstring& w = g_settings.barMonitor;
+    if (w == L"all" || w == L"primary") return true;
+    for (const MonChoice& c : MonitorChoices())
+        if (_wcsicmp(c.device.c_str(), w.c_str()) == 0) return true;
+    return false;
+}
+
+// O monitor cuja cor está sendo ajustada (0 = todos), só enquanto os Ajustes estão abertos.
+static int g_textMonEdit = 0;
+static const PCWSTR* BsTextMonLabels(int* count) {
+    static std::vector<std::wstring> names;
+    static std::vector<PCWSTR> ptrs;
+    static ULONGLONG tick = 0;
+    ULONGLONG now = GetTickCount64();
+    if (ptrs.empty() || now - tick > 1500) {
+        tick = now;
+        names = {L"Todos os monitores"};
+        for (const MonChoice& c : MonitorChoices()) names.push_back(c.label);
+        ptrs.clear();
+        for (const std::wstring& n : names) ptrs.push_back(n.c_str());
+    }
+    if (count) *count = (int)ptrs.size();
+    return ptrs.data();
+}
+static std::wstring TextMonEditDevice() {
+    if (g_textMonEdit <= 0) return L"";
+    std::vector<MonChoice> list = MonitorChoices();
+    return g_textMonEdit - 1 < (int)list.size() ? list[g_textMonEdit - 1].device : L"";
+}
+
 static void TintApply();
 
 static int BsGet(int val) {
@@ -12245,7 +12503,19 @@ static int BsGet(int val) {
         case BV_G_STYLE: return g_glass.tinted ? 1 : 0;
         case BV_CCCLOSE: return g_settings.ccCloseAnim;
         case BV_NTFSHAPE: return g_settings.ntfIconShape;
-        case BV_TEXTCOLOR: return g_settings.theme;
+        case BV_TEXTCOLOR: {
+            std::wstring dev = TextMonEditDevice();
+            return dev.empty() ? g_settings.theme : TextColorFor(dev) + 1;
+        }
+        case BV_TEXTMON: return g_textMonEdit;
+        case BV_BARMON: {
+            if (g_settings.barMonitor == L"all") return 0;
+            if (g_settings.barMonitor == L"primary") return 1;
+            std::vector<MonChoice> list = MonitorChoices();
+            for (size_t i = 0; i < list.size(); i++)
+                if (_wcsicmp(list[i].device.c_str(), g_settings.barMonitor.c_str()) == 0) return 2 + (int)i;
+            return 1;
+        }
         case BV_TCOLOR: return TintPaletteIndex();
         case BV_TLEVEL: return g_settings.tintLevel;
         case BV_TREACH: return g_settings.tintReach;
@@ -12420,6 +12690,30 @@ static void BsSet(int val, int v) {
         OvrSetStr(L"barStyle", kNames[v]);
         BarsRestyle();  // troca o fundo na barra que já existe
         TintApply();    // a cor do texto da barra segue a cor do vidro
+        return;
+    }
+    if (val == BV_BARMON) {
+        std::wstring want = v <= 0 ? L"all" : v == 1 ? L"primary" : L"";
+        if (v >= 2) {
+            std::vector<MonChoice> list = MonitorChoices();
+            if (v - 2 < (int)list.size()) want = list[v - 2].device;
+        }
+        if (want.empty() || want == g_settings.barMonitor) return;
+        g_settings.barMonitor = want;
+        OvrSetStr(L"barMonitor", want);
+        RequestReload(1);  // refaz as barras nos monitores escolhidos
+        return;
+    }
+    if (val == BV_TEXTMON) {
+        int n = 0;
+        BsTextMonLabels(&n);
+        g_textMonEdit = std::clamp(v, 0, std::max(0, n - 1));
+        return;
+    }
+    if (val == BV_TEXTCOLOR && !TextMonEditDevice().empty()) {
+        // Cor própria do monitor escolhido ("Como nos outros" tira a dele).
+        TextColorSet(TextMonEditDevice(), std::clamp(v, 0, 3) - 1);
+        TintApply();
         return;
     }
     if (val == BV_TEXTCOLOR) {
@@ -12752,6 +13046,7 @@ static const PCWSTR kBsBarChoices[] = {L"Vidro", L"Transparente", L"Líquido", L
 static const PCWSTR kBsGlassStyle[] = {L"Transparente", L"Vidro líquido personalizado"};
 static const PCWSTR kBsNtfShape[] = {L"Círculo", L"Formato macOS"};
 static const PCWSTR kBsTextColor[] = {L"Automático", L"Branco", L"Preto"};
+static const PCWSTR kBsTextColorMon[] = {L"Como nos outros", L"Automático", L"Branco", L"Preto"};
 static const PCWSTR kBsCcClose[] = {L"Cascata", L"Encolher", L"Esmaecer", L"Deslizar para cima", L"Nenhuma"};
 static const PCWSTR kBsLookChoices[] = {L"Desfoque", L"Líquido", L"Transparente"};
 static const PCWSTR kBsIslStyle[] = {L"Vidro", L"Escuro"};
@@ -12767,8 +13062,25 @@ static const PCWSTR kBsSearchTgt[] = {L"Pesquisa do Windows", L"Siri Plus"};
 static const PCWSTR kBsNpBar[] = {L"Linha", L"Linha colorida", L"Onda"};
 static const PCWSTR kBsLang[] = {L"Automático (Windows)", L"Português", L"English", L"Español",
                                  L"Français", L"Deutsch", L"Italiano", L"中文（简体）"};
+// As opções de "Mostrar a barra em": todos, o principal e cada monitor ligado.
+static const PCWSTR* BsMonitorLabels(int* count) {
+    static std::vector<std::wstring> names;
+    static std::vector<PCWSTR> ptrs;
+    static ULONGLONG tick = 0;
+    ULONGLONG now = GetTickCount64();
+    if (ptrs.empty() || now - tick > 1500) {
+        tick = now;
+        names = {L"Todos os monitores", L"Monitor principal"};
+        for (const MonChoice& c : MonitorChoices()) names.push_back(c.label);
+        ptrs.clear();
+        for (const std::wstring& n : names) ptrs.push_back(n.c_str());
+    }
+    if (count) *count = (int)ptrs.size();
+    return ptrs.data();
+}
 static const PCWSTR* BsChoiceLabels(int val) {
     switch (val) {
+        case BV_BARMON: return BsMonitorLabels(nullptr);
         case BV_BSSTYLE: return kBsLookChoices;
         case BV_ISLSTYLE: return kBsIslStyle;
         case BV_ISLIN: return kBsIslIn;
@@ -12786,7 +13098,8 @@ static const PCWSTR* BsChoiceLabels(int val) {
         case BV_G_STYLE: return kBsGlassStyle;
         case BV_CCCLOSE: return kBsCcClose;
         case BV_NTFSHAPE: return kBsNtfShape;
-        case BV_TEXTCOLOR: return kBsTextColor;
+        case BV_TEXTCOLOR: return g_textMonEdit > 0 ? kBsTextColorMon : kBsTextColor;
+        case BV_TEXTMON: return BsTextMonLabels(nullptr);
     }
     return kBsChoices;
 }
@@ -12797,6 +13110,17 @@ static int BsChoiceCount(int val) {
         case BV_LANG: return (int)ARRAYSIZE(kBsLang);
         case BV_ISLIN: return 4;
         case BV_ISLOUT: case BV_CCCLOSE: return 5;
+        case BV_BARMON: {
+            int n = 0;
+            BsMonitorLabels(&n);
+            return n;
+        }
+        case BV_TEXTMON: {
+            int n = 0;
+            BsTextMonLabels(&n);
+            return n;
+        }
+        case BV_TEXTCOLOR: return g_textMonEdit > 0 ? 4 : 3;
     }
     return 3;
 }
@@ -13590,6 +13914,11 @@ static bool BsRowDisabled(int rowIdx) {
         return !g_glass.tinted && g_settings.barStyle != 3;
     // Com a barra no Vidro líquido personalizado, o texto segue a cor do vidro.
     if (d.val == BV_TEXTCOLOR) return g_settings.barStyle == 3;
+    if (d.val == BV_TEXTMON) {
+        int n = 0;
+        BsTextMonLabels(&n);
+        return g_settings.barStyle == 3 || n <= 2;  // com um monitor só, não há o que escolher
+    }
     return false;
 }
 static int BsHitRaw(float x, float y, int* part);
@@ -17031,6 +17360,14 @@ static HMENU BuildNowMenu() {
     AddItem(m, ID_NOW_PLAY, std::wstring(1, (wchar_t)(g_ext.playing ? 0xE769 : 0xE768)) +
                                 (g_ext.playing ? L" Pausar" : L" Reproduzir"));
     AddItem(m, ID_NOW_NEXT, std::wstring(1, (wchar_t)0xE893) + L" Próxima");
+    std::wstring app;
+    AcquireSRWLockShared(&g_ccLock);
+    app = NpAppName(g_ccShared.app);
+    ReleaseSRWLockShared(&g_ccLock);
+    if (!app.empty()) {
+        AddSep(m);
+        AddItem(m, ID_NOW_OPEN, TF(L"Abrir %s", {app}));
+    }
     return m;
 }
 
@@ -19721,7 +20058,14 @@ static void NtfLayout() {
     }
     if (g_ntf.groups.empty()) {
         // Sem notificações: uma pílula pequena no centro, como "Editar controles".
-        float pw = std::min(x1 - x0, GmMeasure(g_ntf.fBody, T(L"Nenhuma notificação")) + 34 * s), mid = (x0 + x1) / 2;
+        // A fonte do painel ainda não existe na primeira montagem: mede com uma igual.
+        float tw = 0;
+        if (IDWriteTextFormat* f = MakeFormat(g_settings.fontFamily.c_str(), DWRITE_FONT_WEIGHT_NORMAL, 13 * s)) {
+            tw = GmMeasure(f, T(L"Nenhuma notificação"));
+            f->Release();
+        }
+        if (tw <= 0) tw = 150 * s;
+        float pw = std::min(x1 - x0, tw + 34 * s), mid = (x0 + x1) / 2;
         g_ntf.blocks.push_back({5, D2D1::RectF(mid - pw / 2, y, mid + pw / 2, y + 32 * s), -1, {}});
         y += 38 * s;
     }
@@ -20820,6 +21164,7 @@ static void OpenItemMenu(Bar* b, int idx) {
         case ID_NOW_PREV: CcQueue(JOB_MEDIA_PREV); FocusActive(); return;
         case ID_NOW_PLAY: CcQueue(JOB_MEDIA_TOGGLE); FocusActive(); return;
         case ID_NOW_NEXT: CcQueue(JOB_MEDIA_NEXT); FocusActive(); return;
+        case ID_NOW_OPEN: OpenMediaApp(); return;
         case ID_FOCUS_OFF:
             DndWrite(false);
             g_ext.dnd = 0;
@@ -21477,6 +21822,7 @@ struct Placed { RightSpec spec; float l, r, prefixW; };
 
 static void Render(Bar* b) {
     if (!EnsureResources(b)) return;
+    BarLightScope barLight(b);  // a cor do texto deste monitor
 
     RECT rc;
     GetClientRect(b->hwnd, &rc);
@@ -22590,17 +22936,22 @@ static LRESULT CALLBACK OwnerWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) 
 // Criação / destruição
 // ===========================================================================
 
-static BOOL CALLBACK MonitorEnumProc(HMONITOR mon, HDC, LPRECT, LPARAM) {
+
+static BOOL CALLBACK MonitorEnumProc(HMONITOR mon, HDC, LPRECT, LPARAM chosenPresent) {
+    MONITORINFOEXW mix{};
+    mix.cbSize = sizeof(mix);
+    if (!GetMonitorInfoW(mon, &mix)) return TRUE;
+    if (!BarOnMonitor(mix, chosenPresent != 0)) return TRUE;
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     if (!GetMonitorInfoW(mon, &mi)) return TRUE;
-    if (!g_settings.allMonitors && !(mi.dwFlags & MONITORINFOF_PRIMARY)) return TRUE;
 
     UINT dx = 96, dy = 96;
     GetDpiForMonitor(mon, MDT_EFFECTIVE_DPI, &dx, &dy);
 
     Bar* b = new Bar();
     b->monitor = mon;
+    b->device = mix.szDevice;
     b->monRect = mi.rcMonitor;
     b->dpi = dx;
     b->heightPx = MulDiv(g_settings.height, dx, 96);
@@ -22637,7 +22988,7 @@ static BOOL CALLBACK MonitorEnumProc(HMONITOR mon, HDC, LPRECT, LPARAM) {
 
 static void CreateBars() {
     ResolveTheme();
-    EnumDisplayMonitors(nullptr, nullptr, MonitorEnumProc, 0);
+    EnumDisplayMonitors(nullptr, nullptr, MonitorEnumProc, BarChosenMonitorPresent() ? 1 : 0);
     if (g_settings.autoHide) SetTimer(g_owner, TIMER_FAST, 100, nullptr);
     else KillTimer(g_owner, TIMER_FAST);
     UpdateSolid();
@@ -22963,6 +23314,7 @@ static DWORD WINAPI BarThread(LPVOID) {
                 // Aparência, ícones, fonte, idioma...: valem na barra que já existe,
                 // sem ela sumir e voltar.
                 if (msg.wParam == 0 && !g_bars.empty() && before.allMonitors == g_settings.allMonitors &&
+                    before.barMonitor == g_settings.barMonitor &&
                     before.autoHide == g_settings.autoHide) {
                     ApplySettingsLive(before);
                     continue;
@@ -23425,6 +23777,15 @@ const UiTr kUiTr[] = {
     {L"Automático segue o tema do Windows", L"Automatic follows the Windows theme", L"Automático sigue el tema de Windows", L"Automatique suit le thème de Windows", L"Automatisch folgt dem Windows-Design", L"Automatico segue il tema di Windows", L"自动跟随 Windows 主题"},
     {L"Branco", L"White", L"Blanco", L"Blanc", L"Weiß", L"Bianco", L"白色"},
     {L"Preto", L"Black", L"Negro", L"Noir", L"Schwarz", L"Nero", L"黑色"},
+    {L"Abrir %s", L"Open %s", L"Abrir %s", L"Ouvrir %s", L"%s öffnen", L"Apri %s", L"打开 %s"},
+    {L"Mostrar a barra em", L"Show the bar on", L"Mostrar la barra en", L"Afficher la barre sur", L"Leiste anzeigen auf", L"Mostra la barra su", L"菜单栏显示在"},
+    {L"Todos os monitores, o principal ou um deles; se o escolhido for desconectado, a barra vai para o principal", L"All displays, the main one or one of them; if the chosen one is disconnected, the bar moves to the main display", L"Todos los monitores, el principal o uno de ellos; si el elegido se desconecta, la barra pasa al principal", L"Tous les écrans, le principal ou l'un d'eux ; si celui choisi est déconnecté, la barre passe sur le principal", L"Alle Bildschirme, der Hauptbildschirm oder einer davon; wird der gewählte getrennt, wechselt die Leiste zum Hauptbildschirm", L"Tutti i monitor, il principale o uno di essi; se quello scelto viene scollegato, la barra passa al principale", L"所有显示器、主显示器或其中一个；所选显示器断开时，菜单栏移到主显示器"},
+    {L"Todos os monitores", L"All displays", L"Todos los monitores", L"Tous les écrans", L"Alle Bildschirme", L"Tutti i monitor", L"所有显示器"},
+    {L"Monitor principal", L"Main display", L"Monitor principal", L"Écran principal", L"Hauptbildschirm", L"Monitor principale", L"主显示器"},
+    {L"Monitor", L"Display", L"Monitor", L"Écran", L"Bildschirm", L"Monitor", L"显示器"},
+    {L"Cor do texto: monitor", L"Text color: display", L"Color del texto: monitor", L"Couleur du texte : écran", L"Textfarbe: Bildschirm", L"Colore del testo: monitor", L"文字颜色：显示器"},
+    {L"Escolha um monitor para dar a ele uma cor própria", L"Pick a display to give it its own color", L"Elige un monitor para darle su propio color", L"Choisissez un écran pour lui donner sa propre couleur", L"Wähle einen Bildschirm für eine eigene Farbe", L"Scegli un monitor per dargli un colore proprio", L"选择一台显示器，为它单独设置颜色"},
+    {L"Como nos outros", L"Same as the others", L"Como en los demás", L"Comme les autres", L"Wie die anderen", L"Come gli altri", L"与其他相同"},
     {L"Discos", L"Disks", L"Discos", L"Disques", L"Laufwerke", L"Dischi", L"磁盘"},
     {L"Clique para ver os discos e quanto cada um está cheio", L"Click to see the disks and how full each one is", L"Haz clic para ver los discos y cuánto está lleno cada uno", L"Cliquez pour voir les disques et leur remplissage", L"Klicken, um die Laufwerke und ihre Belegung zu sehen", L"Fai clic per vedere i dischi e quanto è pieno ciascuno", L"点击查看磁盘及其使用量"},
     {L"Discos: o do sistema está %s% cheio", L"Disks: the system disk is %s% full", L"Discos: el del sistema está al %s%", L"Disques : le disque système est plein à %s %", L"Laufwerke: Systemlaufwerk zu %s% voll", L"Dischi: quello di sistema è pieno al %s%", L"磁盘：系统磁盘已用 %s%"},

@@ -23,7 +23,7 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Live glass**: the bar and panels blur what's behind them in real time, with an experimental liquid glass with edge refraction (on by default)
 - **Custom liquid glass** (the theme from Siri Plus Launchpad): your color at the top, fading to clear glass at the bottom, with a fine line of light along the bottom edge. For the panels, the bar's background or both; color, strength and how far down the color goes are set in Menu Bar Settings
 - **Bar and menus**: transparent (default), blur glass or liquid glass bar, opaque when the app is maximized; one glass setting for the Control Center, menus, panels and pills; light, dark or automatic theme, nine selection colors, font and sizes; hides with full-screen apps, optional auto-hide, every monitor
-- **Disks** (optional): the menu lists every local and removable disk with a usage bar and opens it in Explorer; bar text and icons in white, black or automatic; all bar icons at one size that grows with the icon size setting.
+- **Disks** (optional): the menu lists every local and removable disk with a usage bar and opens it in Explorer; bar text and icons in white, black or automatic, for all displays or each one on its own; the bar on all displays, the main one or a chosen display; clicking the album cover opens the playing app; all bar icons at one size that grows with the icon size setting.
 - **Settings window**: logo → **Menu Bar Settings…** opens the settings in a macOS-style window, with search, applied live without restarting the bar
 - **Your language**: follows the Windows display language, or pick one (English, Portuguese, Spanish, French, German, Italian and Simplified Chinese)
 
