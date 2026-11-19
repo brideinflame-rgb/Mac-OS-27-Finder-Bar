@@ -22,6 +22,12 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Notifications and pills apart**: *Receive app notifications* and *Show notice pills* are separate switches; with the pills off, notifications still go to the bell
 - **Selection gradient**: the selection pill can blend two colors
 - **Test notifications**: a button in the settings sends a test notification from a different app on each click
+- **Clear with an animation**: the cards slide out one after another
+- **The bar slides** up and down when it hides and shows; with "Hide when a window is maximized", pointing at the top edge shows it over the window, as on macOS
+- **Back up your settings**: export them to a file and import them later or on another PC
+- **Num Lock and Scroll Lock** pills, like Caps Lock
+- **Glass dialog** to confirm Restart, Shut Down and Sign Out
+- **Fixes**: the pill following the Glass bar, the bar coming back after full screen with the handle on, the app name after minimizing or closing it, menus flickering the app's window, the bar over a full-screen video on another display, optional updates counted as pending, Windows' own icons in the tray, stretched video thumbnails, Bluetooth LE devices (mice, keyboards) missing from the list, and "Ajustes do Sistema" in Portuguese
 
 ---
 
