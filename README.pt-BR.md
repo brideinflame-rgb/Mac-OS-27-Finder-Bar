@@ -84,7 +84,7 @@ A barra roda num processo próprio do Windhawk (aparece como Windhawk no Gerenci
 ## Limitações conhecidas
 
 - Apps sem barra de menus clássica usam menus prontos baseados em atalhos de teclado.
-- O Bluetooth lista os aparelhos clássicos (não BLE) conectados; conectar e desconectar um aparelho já pareado abre as Configurações. Aparelhos novos podem ser encontrados e pareados na pílula do Bluetooth da barra (o código do pareamento aparece na pílula, para confirmar ou digitar no aparelho), menos os que pedem para digitar um PIN no PC, que precisam das Configurações.
+- O Bluetooth lista os aparelhos conectados, clássicos e Bluetooth LE (mouses, teclados); conectar e desconectar um aparelho já pareado abre as Configurações. Aparelhos novos podem ser encontrados e pareados na pílula do Bluetooth da barra (o código do pareamento aparece na pílula, para confirmar ou digitar no aparelho), menos os que pedem para digitar um PIN no PC, que precisam das Configurações.
 - O modo de energia e a economia de energia usam funções não documentadas do Windows; se o Windows recusar, o bloco abre a página certa das Configurações.
 - A gravação de tela usa Win+Shift+R e precisa da Ferramenta de Captura atualizada.
 - Responder pela pílula funciona com apps que registram um ativador de notificações no Windows; senão, a pílula abre o app e copia o seu texto.
