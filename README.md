@@ -27,7 +27,8 @@ A [Windhawk](https://windhawk.net) mod that adds a macOS 27-style menu bar to th
 - **Back up your settings**: export them to a file and import them later or on another PC
 - **Num Lock and Scroll Lock** pills, like Caps Lock
 - **Glass dialog** to confirm Restart, Shut Down and Sign Out
-- **Fixes**: the pill following the Glass bar, the bar coming back after full screen with the handle on, the app name after minimizing or closing it, menus flickering the app's window, the bar over a full-screen video on another display, optional updates counted as pending, Windows' own icons in the tray, stretched video thumbnails, Bluetooth LE devices (mice, keyboards) missing from the list, and "Ajustes do Sistema" in Portuguese
+- **Sharper Now Playing art**: the cover is enlarged once in high quality, and video thumbnails show whole over a blurred copy of themselves instead of a cropped, stretched middle
+- **Fixes**: the bar hiding or reloading when the pointer rested on a button (multi-display setups with different scales), the pill following the Glass bar, the bar coming back after full screen with the handle on, the app name after minimizing or closing it, menus flickering the app's window, the bar over a full-screen video on another display, optional updates counted as pending, Windows' own icons in the tray, stretched video thumbnails, Bluetooth LE devices (mice, keyboards) missing from the list, and "Ajustes do Sistema" in Portuguese
 
 ---
 

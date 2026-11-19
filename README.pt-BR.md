@@ -27,7 +27,8 @@ Um mod do [Windhawk](https://windhawk.net) que coloca uma barra de menus no esti
 - **Cópia dos ajustes**: exporte para um arquivo e importe depois ou em outro PC
 - **Num Lock e Scroll Lock** com pílula, como o Caps Lock
 - **Caixa de vidro** para confirmar Reiniciar, Desligar e Encerrar sessão
-- **Correções**: a pílula acompanhando a barra no Vidro, a barra voltando depois da tela cheia com a alça ligada, o nome do app depois de minimizar ou fechar, os menus fazendo a janela do app piscar, a barra por cima de vídeo em tela cheia no outro monitor, atualizações opcionais contadas como pendentes, os ícones do próprio Windows na bandeja, miniaturas de vídeo esticadas, aparelhos Bluetooth LE (mouses, teclados) fora da lista e "Ajustes do Sistema" em português
+- **Capa do Tocando Agora mais nítida**: a capa é ampliada uma vez em alta qualidade, e a miniatura de vídeo aparece inteira sobre uma cópia desfocada dela mesma, em vez de um recorte do meio esticado
+- **Correções**: a barra sumindo ou recarregando com o mouse parado num botão (vários monitores com escalas diferentes), a pílula acompanhando a barra no Vidro, a barra voltando depois da tela cheia com a alça ligada, o nome do app depois de minimizar ou fechar, os menus fazendo a janela do app piscar, a barra por cima de vídeo em tela cheia no outro monitor, atualizações opcionais contadas como pendentes, os ícones do próprio Windows na bandeja, miniaturas de vídeo esticadas, aparelhos Bluetooth LE (mouses, teclados) fora da lista e "Ajustes do Sistema" em português
 
 ---
 
